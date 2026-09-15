@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 
 export const GLYPHS = {
@@ -100,6 +100,9 @@ function MoveArrow({ from, to, flip }) {
 export default function Board({ fen, orientation = 'w', onMove, highlights = {}, lastMove, viewOnly = false }) {
   const [selected, setSelected] = useState(null);
   const [promo, setPromo] = useState(null); // {from,to} awaiting promotion choice
+  const [drag, setDrag] = useState(null); // {from,x,y} while dragging
+  const pendingRef = useRef(null); // {sq,x,y} pointer-down candidate
+  const suppressClickRef = useRef(false);
   const game = useMemo(() => new Chess(fen), [fen]);
   const flip = orientation === 'b';
 
@@ -138,6 +141,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
   }, [selected, fen, viewOnly]); // eslint-disable-line
 
   function click(sq) {
+    if (suppressClickRef.current) { suppressClickRef.current = false; return; }
     if (viewOnly) return;
     const piece = game.get(sq);
     if (selected) {
@@ -155,6 +159,48 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
     setPromo(null);
     if (piece && piece.color === game.turn()) setSelected(sq);
     else setSelected(null);
+  }
+
+  // ---- drag and drop ----
+  function onSqPointerDown(e, sq) {
+    if (viewOnly || e.button !== 0) return;
+    if (selected === sq || legalTargets[sq]) return; // let click handling deal with it
+    const piece = game.get(sq);
+    if (!(piece && piece.color === game.turn())) return;
+    pendingRef.current = { sq, x: e.clientX, y: e.clientY };
+    e.currentTarget.setPointerCapture?.(e.pointerId);
+  }
+
+  function onSqPointerMove(e, sq) {
+    const p = pendingRef.current;
+    if (!p || p.sq !== sq) return;
+    const dx = e.clientX - p.x;
+    const dy = e.clientY - p.y;
+    if (!drag && Math.hypot(dx, dy) > 7) {
+      setSelected(p.sq);
+      setDrag({ from: p.sq, x: e.clientX, y: e.clientY });
+    } else if (drag) {
+      setDrag({ from: drag.from, x: e.clientX, y: e.clientY });
+    }
+  }
+
+  function onSqPointerUp(e, sq) {
+    const p = pendingRef.current;
+    pendingRef.current = null;
+    if (!drag || !p || p.sq !== sq) return;
+    suppressClickRef.current = true;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const target = el?.closest?.('[data-sq]')?.getAttribute('data-sq') || null;
+    const from = drag.from;
+    setDrag(null);
+    if (target && target !== from && legalTargets[target]) {
+      if (legalTargets[target] === 'promo') setPromo({ from, to: target });
+      else { onMove({ from, to: target }); setSelected(null); }
+    } else if (target === from) {
+      setSelected(from); // dropped back on its own square = select
+    } else {
+      setSelected(null);
+    }
   }
 
   function choosePromo(type) {
@@ -175,7 +221,16 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
           if (legalTargets[sq]) cls.push('target-' + legalTargets[sq]);
           if (highlights[sq]) cls.push(highlights[sq]);
           return (
-            <button key={sq} className={cls.join(' ')} onClick={() => click(sq)} aria-label={sq}>
+            <button
+              key={sq}
+              data-sq={sq}
+              className={cls.join(' ')}
+              onClick={() => click(sq)}
+              onPointerDown={(e) => onSqPointerDown(e, sq)}
+              onPointerMove={(e) => onSqPointerMove(e, sq)}
+              onPointerUp={(e) => onSqPointerUp(e, sq)}
+              aria-label={sq}
+            >
               {(sq[0] === (flip ? 'h' : 'a')) && <span className="coord rank">{sq[1]}</span>}
               {(sq[1] === (flip ? '1' : '8')) && <span className="coord file">{sq[0]}</span>}
             </button>
@@ -230,6 +285,14 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
             );
           })}
         </div>
+        {drag && (() => {
+          const p = game.get(drag.from);
+          return p ? (
+            <span className="drag-ghost" style={{ left: drag.x, top: drag.y }} aria-hidden="true">
+              <span className={`piece ${p.color === 'w' ? 'white' : 'black'}`}>{GLYPHS[p.type]}</span>
+            </span>
+          ) : null;
+        })()}
       </div>
     </div>
   );

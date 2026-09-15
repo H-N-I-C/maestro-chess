@@ -7,10 +7,21 @@ import SidePanel from './SidePanel.jsx';
 import { DIFFICULTIES, bestMove } from '../engine.js';
 import { playMoveSound } from '../sound.js';
 import { hostGame, joinGame, makeCode } from '../online.js';
+import { openingName } from '../openings.js';
 
 const COACH_OPEN_KEY = 'maestro-coach-open';
 const MOVES_OPEN_KEY = 'maestro-moves-open';
 const GAME_SAVE_KEY = 'maestro-game';
+const ONLINE_SAVE_KEY = 'maestro-online';
+const RESULTS_KEY = 'maestro-results';
+
+function loadResults() {
+  try {
+    const r = JSON.parse(localStorage.getItem(RESULTS_KEY));
+    if (r && r.online) return r;
+  } catch { /* ignore */ }
+  return { engine: {}, online: { w: 0, l: 0, d: 0 } };
+}
 const MOBILE_QUERY = '(max-width: 760px)';
 
 const PIECE_VALUE = { p: 1, n: 3, b: 3, r: 5, q: 9 };
@@ -24,6 +35,10 @@ const WATCH_PROMPTS = [
 
 function loadSavedGame() {
   try { return JSON.parse(localStorage.getItem(GAME_SAVE_KEY)); } catch { return null; }
+}
+
+function loadSavedOnline() {
+  try { return JSON.parse(localStorage.getItem(ONLINE_SAVE_KEY)); } catch { return null; }
 }
 
 /** Piece that a move from->to will capture (handles en passant). */
@@ -48,6 +63,7 @@ function CapturedTray({ victims, advantage, pieceColor }) {
 
 export default function Play({ stageTitle }) {
   const saved = useMemo(loadSavedGame, []);
+  const savedOnline = useMemo(loadSavedOnline, []);
   const [difficulty, setDifficulty] = useState(() => DIFFICULTIES.find(d => d.id === saved?.difficultyId) || DIFFICULTIES[2]);
   const [color, setColor] = useState(saved?.color === 'b' ? 'b' : 'w');
   const [game, setGame] = useState(() => {
@@ -91,6 +107,13 @@ export default function Play({ stageTitle }) {
   const [online, setOnline] = useState({ status: 'off', code: '', role: null, error: '' });
   const [oppGone, setOppGone] = useState(false);
   const [joinCode, setJoinCode] = useState('');
+  const [chatLog, setChatLog] = useState([]); // [{who:'me'|'opp', text}]
+  const [chatInput, setChatInput] = useState('');
+  const [onlineOver, setOnlineOver] = useState(null); // 'win'|'lose'|'draw'|'win-resign'|'lose-resign'|'draw-agreed'
+  const [pendingOffer, setPendingOffer] = useState(null); // {kind:'draw'|'takeback'} we received
+  const [rejoin, setRejoin] = useState(savedOnline?.code ? savedOnline : null); // restorable online game
+  const [results, setResults] = useState(loadResults);
+  const resultRecorded = useRef(false);
   const onlineRef = useRef(null); // { peer, conn, role, prevColor }
 
   // live snapshot for connection handlers (they outlive any single render)
@@ -107,6 +130,20 @@ export default function Play({ stageTitle }) {
     const el = moveListRef.current?.querySelector('.mv.active');
     el?.scrollIntoView({ block: 'nearest' });
   }, [activePly]);
+
+  // arrow-key move navigation (ignored while typing)
+  useEffect(() => {
+    function onKey(e) {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const t = e.target;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      if (e.key === 'ArrowLeft') stepPrev();
+      else stepNext();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [history, viewIndex]);
 
   useEffect(() => {
     const mql = window.matchMedia(MOBILE_QUERY);
@@ -126,7 +163,13 @@ export default function Play({ stageTitle }) {
       mode: mode === 'online' ? 'play' : mode,
       online: mode === 'online', // never resume an online game as an engine game
     }));
-  }, [game, lastMove, color, difficulty, history, captured, mode]);
+    if (mode === 'online' && online.code) {
+      localStorage.setItem(ONLINE_SAVE_KEY, JSON.stringify({
+        code: online.code, role: online.role || onlineRef.current?.role,
+        fen: game.fen(), history, captured, lastMove,
+      }));
+    }
+  }, [game, lastMove, color, difficulty, history, captured, mode, online]);
 
   // if the saved position had the engine to move (e.g. player refreshed
   // while Maestro was thinking), let it reply now
@@ -185,7 +228,7 @@ export default function Play({ stageTitle }) {
           playMoveSound({ capture: !!victim });
           const lm = { from, to, san: moved.san, color: moved.color, piece: moved.piece };
           setLastMove(lm);
-          setHistory((h) => [...(h || [{ fen: prev.fen(), lastMove: null }]), { fen: next.fen(), lastMove: lm }]);
+          setHistory((h) => [...(h || [{ fen: prev.fen(), lastMove: null }]), { fen: next.fen(), lastMove: lm, victim: victim || null }]);
         } catch { /* illegal — ignore */ }
         next.stageTitle = stageTitle;
         next.difficultyLabel = d.label;
@@ -295,6 +338,9 @@ export default function Play({ stageTitle }) {
     setViewIndex(null);
     setCaptured({ w: [], b: [] });
     setStatus('');
+    setOnlineOver(null);
+    setPendingOffer(null);
+    resultRecorded.current = false;
   }
 
   function openLobby() {
@@ -307,9 +353,23 @@ export default function Play({ stageTitle }) {
     const code = makeCode();
     const peer = hostGame(code, {
       onConnected: (conn) => {
-        onlineRef.current.conn = conn;
+        const cur = onlineRef.current;
+        // a game already has its player — reject extra connections
+        if (cur?.conn && cur.conn.open && cur.conn !== conn) {
+          try { conn.send({ t: 'busy' }); } catch { /* ignore */ }
+          conn.close();
+          return;
+        }
+        cur.conn = conn;
         setOppGone(false);
-        beginOnlineGame('host');
+        const s = liveRef.current;
+        if (s.mode === 'online' && (s.history?.length || 1) > 1) {
+          // returning guest (reconnection) — keep the game, just sync
+          hostSync(s.game.fen(), s.history, s.captured, s.lastMove);
+          setChatLog((c) => [...c, { who: 'sys', text: 'Your opponent reconnected.' }]);
+        } else {
+          beginOnlineGame('host');
+        }
       },
       onData: onlineHostData,
       onClose: () => setOppGone(true),
@@ -319,8 +379,8 @@ export default function Play({ stageTitle }) {
     setOnline({ status: 'waiting', code, role: 'host', error: '' });
   }
 
-  function onlineJoin() {
-    const code = joinCode.trim().toLowerCase();
+  function onlineJoin(codeArg) {
+    const code = (codeArg ?? joinCode).trim().toLowerCase();
     if (!code) return;
     const peer = joinGame(code, {
       onConnected: (conn) => {
@@ -352,6 +412,8 @@ export default function Play({ stageTitle }) {
   function onlineHostData(d) {
     if (!d || typeof d !== 'object') return;
     const s = liveRef.current;
+    if (d.t === 'chat') { setChatLog((c) => [...c.slice(-99), { who: 'opp', text: String(d.text).slice(0, 300) }]); return; }
+    if (handleGameAction(d)) return;
     if (d.t === 'sync') {
       hostSync(s.game.fen(), s.history, s.captured, s.lastMove);
       return;
@@ -366,7 +428,7 @@ export default function Play({ stageTitle }) {
       try { moved = g.move({ from: d.from, to: d.to, promotion: d.promotion }); } catch { return; }
       const victim = findVictim(s.game, d.from, d.to);
       const lm = { from: d.from, to: d.to, san: moved.san, color: moved.color, piece: moved.piece };
-      const hist = [...(s.history || [{ fen: s.game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm }];
+      const hist = [...(s.history || [{ fen: s.game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm, victim: victim || null }];
       const caps = victim
         ? { ...s.captured, [victim.color]: [...s.captured[victim.color], victim.type] }
         : s.captured;
@@ -381,9 +443,12 @@ export default function Play({ stageTitle }) {
 
   function onlineGuestData(d) {
     if (!d || typeof d !== 'object') return;
+    if (d.t === 'chat') { setChatLog((c) => [...c.slice(-99), { who: 'opp', text: String(d.text).slice(0, 300) }]); return; }
+    if (handleGameAction(d)) return;
     if (d.t === 'newgame') { guestNewGame(d); return; }
+    if (d.t === 'busy') { setOnline((o) => ({ ...o, status: 'error', error: 'That game already has two players.' })); return; }
     if (d.t !== 'state') return;
-    const prev = game;
+    const prev = liveRef.current.game;
     const lm = d.lastMove;
     if (lm) {
       const victim = findVictim(prev, lm.from, lm.to);
@@ -395,12 +460,131 @@ export default function Play({ stageTitle }) {
     setLastMove(lm);
   }
 
+  function rebuildFromHistory(hist) {
+    const last = hist[hist.length - 1];
+    try { setGame(new Chess(last.fen)); } catch { return; }
+    const caps = { w: [], b: [] };
+    for (const e of hist) if (e.victim) caps[e.victim.color].push(e.victim.type);
+    setHistory(hist);
+    setCaptured(caps);
+    setLastMove(last.lastMove || null);
+    setViewIndex(null);
+    setStatus('');
+  }
+
+  // single-player takeback: undo your last move and the engine's reply
+  function singlePlayerTakeback() {
+    if (mode !== 'play' || thinking || (history?.length || 1) < 2) return;
+    const n = history.length >= 3 ? 2 : 1;
+    rebuildFromHistory(history.slice(0, history.length - n));
+  }
+
+  // ---- online game actions ----
+  function sysChat(text) { setChatLog((c) => [...c.slice(-99), { who: 'sys', text }]); }
+
+  function applyOnlineTakeback() {
+    const hist = liveRef.current.history;
+    if ((hist?.length || 1) >= 3) rebuildFromHistory(hist.slice(0, hist.length - 2));
+  }
+
+  function requestTakeback() {
+    if ((history?.length || 1) < 3) return;
+    onlineRef.current?.conn?.send({ t: 'takeback' });
+    sysChat('Takeback requested.');
+  }
+  function acceptTakeback() {
+    setPendingOffer(null);
+    onlineRef.current?.conn?.send({ t: 'takeback-ok' });
+    applyOnlineTakeback();
+  }
+  function declineOffer() {
+    onlineRef.current?.conn?.send({ t: pendingOffer?.kind === 'draw' ? 'draw-no' : 'takeback-no' });
+    setPendingOffer(null);
+  }
+  function offerDraw() {
+    onlineRef.current?.conn?.send({ t: 'draw' });
+    sysChat('Draw offered.');
+  }
+  function acceptDraw() {
+    setPendingOffer(null);
+    onlineRef.current?.conn?.send({ t: 'draw-ok' });
+    setOnlineOver('draw-agreed');
+  }
+  function resign() {
+    onlineRef.current?.conn?.send({ t: 'resign' });
+    setOnlineOver('lose-resign');
+  }
+
+  function handleGameAction(d) {
+    if (d.t === 'takeback') { setPendingOffer({ kind: 'takeback' }); return true; }
+    if (d.t === 'takeback-ok') { applyOnlineTakeback(); sysChat('Takeback accepted.'); return true; }
+    if (d.t === 'takeback-no') { sysChat('Takeback declined.'); return true; }
+    if (d.t === 'draw') { setPendingOffer({ kind: 'draw' }); return true; }
+    if (d.t === 'draw-ok') { setOnlineOver('draw-agreed'); return true; }
+    if (d.t === 'draw-no') { sysChat('Draw offer declined.'); return true; }
+    if (d.t === 'resign') { setOnlineOver('win-resign'); return true; }
+    return false;
+  }
+
+  function sendChat() {
+    const text = chatInput.trim();
+    if (!text) return;
+    onlineRef.current?.conn?.send({ t: 'chat', text });
+    setChatLog((c) => [...c.slice(-99), { who: 'me', text: text.slice(0, 300) }]);
+    setChatInput('');
+  }
+
+  function rejoinOnline() {
+    const r = rejoin;
+    setRejoin(null);
+    onlineRef.current = { peer: null, conn: null, role: r.role, prevColor: color };
+    if (r.role === 'host') {
+      const peer = hostGame(r.code, {
+        onConnected: (conn) => {
+          const cur = onlineRef.current;
+          if (cur?.conn && cur.conn.open && cur.conn !== conn) {
+            try { conn.send({ t: 'busy' }); } catch { /* ignore */ }
+            conn.close();
+            return;
+          }
+          cur.conn = conn;
+          setOppGone(false);
+          hostSync(game.fen(), history, captured, lastMove);
+        },
+        onData: onlineHostData,
+        onClose: () => setOppGone(true),
+        onError: (e) => setOnline((o) => ({ ...o, status: 'error', error: String(e?.type || e) })),
+      });
+      onlineRef.current.peer = peer;
+      setMode('online');
+      setOnline({ status: 'playing', code: r.code, role: 'host', error: '' });
+      setColor('w');
+      try { setGame(new Chess(r.fen)); } catch { /* fresh */ }
+      setHistory(r.history);
+      setCaptured(r.captured || { w: [], b: [] });
+      setLastMove(r.lastMove || null);
+      setChatLog((c) => [...c, { who: 'sys', text: 'Game restored — waiting for your opponent to rejoin.' }]);
+    } else {
+      onlineJoin(r.code); // guest path re-syncs from the host
+    }
+  }
+
+  function discardRejoin() {
+    localStorage.removeItem(ONLINE_SAVE_KEY);
+    setRejoin(null);
+  }
+
   function leaveOnline() {
     const prevColor = onlineRef.current?.prevColor || 'w';
     onlineRef.current?.peer?.destroy();
     onlineRef.current = null;
+    localStorage.removeItem(ONLINE_SAVE_KEY);
+    setRejoin(null);
     setOnline({ status: 'off', code: '', role: null, error: '' });
     setOppGone(false);
+    setChatLog([]);
+    setOnlineOver(null);
+    setPendingOffer(null);
     setMode('play');
     setColor(prevColor);
     newGame(prevColor, difficulty);
@@ -426,20 +610,43 @@ export default function Play({ stageTitle }) {
     setLastMove(null);
     setViewIndex(null);
     setStatus('');
+    setOnlineOver(null);
+    setPendingOffer(null);
   }
 
   useEffect(() => {
     const over = game.isGameOver();
-    if (over) {
-      let s = '';
-      if (game.isCheckmate()) s = `Checkmate — ${game.turn() === 'w' ? 'Black' : 'White'} wins. ${game.turn() === color ? 'Ask the coach where it went wrong.' : 'Well played!'}`;
-      else if (game.isStalemate()) s = 'Stalemate — draw.';
-      else if (game.isDraw()) s = 'Draw.';
-      setStatus(s);
-    } else {
+    if (!over) {
       setStatus(game.isCheck() ? 'Check!' : '');
+      return;
     }
-  }, [game, color]);
+    let s = '';
+    if (game.isCheckmate()) s = `Checkmate — ${game.turn() === 'w' ? 'Black' : 'White'} wins. ${game.turn() === color ? 'Ask the coach where it went wrong.' : 'Well played!'}`;
+    else if (game.isStalemate()) s = 'Stalemate — draw.';
+    else if (game.isDraw()) s = 'Draw.';
+    setStatus(s);
+    // record the result once per finished game
+    if (resultRecorded.current) return;
+    resultRecorded.current = true;
+    setResults((r) => {
+      const next = JSON.parse(JSON.stringify(r));
+      let outcome; // 'w' | 'l' | 'd' from the local player's perspective
+      if (game.isDraw() || game.isStalemate()) outcome = 'd';
+      else {
+        const winner = game.turn() === 'w' ? 'b' : 'w';
+        const me = mode === 'online' ? (online.role === 'host' ? 'w' : 'b') : color;
+        outcome = winner === me ? 'w' : 'l';
+      }
+      if (mode === 'online') next.online[outcome] += 1;
+      else {
+        const id = difficulty.id;
+        next.engine[id] = next.engine[id] || { w: 0, l: 0, d: 0 };
+        next.engine[id][outcome] += 1;
+      }
+      localStorage.setItem(RESULTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, [game, color]); // eslint-disable-line
 
   function onMove({ from, to, promotion }) {
     if (mode === 'watch') return;
@@ -456,7 +663,7 @@ export default function Play({ stageTitle }) {
       try { moved = g.move({ from, to, promotion }); } catch { return; }
       const victim = findVictim(game, from, to);
       const lm = { from, to, san: moved.san, color: moved.color, piece: moved.piece };
-      const hist = [...(history || [{ fen: game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm }];
+      const hist = [...(history || [{ fen: game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm, victim: victim || null }];
       const caps = victim
         ? { ...captured, [victim.color]: [...captured[victim.color], victim.type] }
         : captured;
@@ -485,7 +692,7 @@ export default function Play({ stageTitle }) {
     playMoveSound({ capture: !!victim });
     setGame(g);
     setLastMove(lm);
-    setHistory((h) => [...(h || [{ fen: game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm }]);
+    setHistory((h) => [...(h || [{ fen: game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm, victim: victim || null }]);
     engineReply(g, difficulty);
   }
 
@@ -497,6 +704,9 @@ export default function Play({ stageTitle }) {
   const whiteAdv = captured.b.reduce((s, t) => s + (PIECE_VALUE[t] || 0), 0) - captured.w.reduce((s, t) => s + (PIECE_VALUE[t] || 0), 0);
   const byWhite = [...captured.b].sort((a, b) => PIECE_VALUE[b] - PIECE_VALUE[a]);
   const byBlack = [...captured.w].sort((a, b) => PIECE_VALUE[b] - PIECE_VALUE[a]);
+  const opening = useMemo(() => {
+    try { return openingName(game.history()); } catch { return null; }
+  }, [game]);
   function stepPrev() { setViewIndex((i) => (i === null ? history.length - 2 : Math.max(0, i - 1))); }
   function stepNext() {
     setViewIndex((i) => {
@@ -593,6 +803,13 @@ export default function Play({ stageTitle }) {
           </div>
         </div>
         <div className="board-area">
+          {rejoin && online.status === 'off' && (
+            <div className="rejoin-bar panel">
+              <span>You have an online game in progress (code <strong>{rejoin.code}</strong>).</span>
+              <button type="button" className="primary" onClick={rejoinOnline}>Rejoin</button>
+              <button type="button" className="mini" onClick={discardRejoin}>Discard</button>
+            </div>
+          )}
           {online.status !== 'off' && online.status !== 'playing' ? (
             <div className="online-lobby panel">
               <h3>Play a friend online</h3>
@@ -609,7 +826,7 @@ export default function Play({ stageTitle }) {
                       maxLength={6}
                       aria-label="Game code"
                     />
-                    <button type="button" onClick={onlineJoin} disabled={joinCode.trim().length < 4}>Join</button>
+                    <button type="button" onClick={() => onlineJoin()} disabled={joinCode.trim().length < 4}>Join</button>
                   </div>
                 </>
               )}
@@ -627,8 +844,22 @@ export default function Play({ stageTitle }) {
           ) : (
           <>
           {oppGone && <div className="online-gone">Your opponent disconnected.</div>}
+          {pendingOffer && (
+            <div className="offer-bar">
+              <span>{pendingOffer.kind === 'draw' ? 'Your opponent offers a draw.' : 'Your opponent requests a takeback.'}</span>
+              <button type="button" className="primary" onClick={pendingOffer.kind === 'draw' ? acceptDraw : acceptTakeback}>Accept</button>
+              <button type="button" className="mini" onClick={declineOffer}>Decline</button>
+            </div>
+          )}
           <CapturedTray victims={byWhite} advantage={whiteAdv} pieceColor="black" />
-          <Board fen={boardFen} orientation={color} onMove={onMove} lastMove={boardLastMove} viewOnly={viewing || mode === 'watch' || (mode === 'online' && game.turn() !== color)} />
+          <Board fen={boardFen} orientation={color} onMove={onMove} lastMove={boardLastMove} viewOnly={viewing || mode === 'watch' || !!onlineOver || (mode === 'online' && game.turn() !== color)} />
+          {mode === 'online' && !onlineOver && (
+            <div className="online-actions">
+              <button type="button" className="mini" onClick={requestTakeback} disabled={(history?.length || 1) < 3 || !!pendingOffer}>Takeback</button>
+              <button type="button" className="mini" onClick={offerDraw} disabled={!!pendingOffer}>Offer draw</button>
+              <button type="button" className="mini resign" onClick={resign}>Resign</button>
+            </div>
+          )}
           {mode === 'watch' ? (
             <div className="move-nav watch-controls">
               <button type="button" className="icon-btn" onClick={watchRewind} disabled={!canPrev} aria-label="Rewind" title="Rewind one move">‹</button>
@@ -661,6 +892,9 @@ export default function Play({ stageTitle }) {
           <div className="move-nav">
             <button type="button" className="icon-btn" onClick={stepPrev} disabled={!canPrev} aria-label="Previous move" title="Previous move">‹</button>
             <button type="button" className="icon-btn" onClick={stepNext} disabled={!canNext} aria-label="Next move" title="Next move">›</button>
+            {mode === 'play' && (
+              <button type="button" className="mini takeback-btn" onClick={singlePlayerTakeback} disabled={thinking || (history?.length || 1) < 2}>Takeback</button>
+            )}
           </div>
           )}
           {boardLastMove && (
@@ -681,17 +915,22 @@ export default function Play({ stageTitle }) {
                     : `${game.turn() === 'w' ? 'White' : 'Black'} to move`)
                 : thinking ? <span className="thinking">Maestro is thinking…</span> : status || `${game.turn() === color ? 'Your move' : 'Opponent to move'} (${game.turn() === 'w' ? 'white' : 'black'})`}
           </div>
-          {game.isGameOver() && !viewing && (
+          {(game.isGameOver() || onlineOver) && !viewing && (
             <div className="game-over panel">
               <p className="go-title">
-                {game.isCheckmate()
-                  ? `Checkmate — ${game.turn() === 'w' ? 'Black' : 'White'} wins`
-                  : game.isStalemate() ? 'Stalemate — draw' : 'Draw'}
+                {onlineOver === 'win-resign' ? 'You win — your opponent resigned'
+                  : onlineOver === 'lose-resign' ? 'You resigned'
+                  : onlineOver === 'draw-agreed' ? 'Draw agreed'
+                  : game.isCheckmate()
+                    ? `Checkmate — ${game.turn() === 'w' ? 'Black' : 'White'} wins`
+                    : game.isStalemate() ? 'Stalemate — draw' : 'Draw'}
               </p>
               <p className="go-detail">
-                {game.isCheckmate()
-                  ? (game.turn() === color ? 'Ask the coach where it went wrong.' : 'Well played!')
-                  : 'Nobody made a wrong move — ask the coach for ideas to sharpen it next time.'}
+                {onlineOver
+                  ? 'Run it back or review the game together.'
+                  : game.isCheckmate()
+                    ? (game.turn() === color ? 'Ask the coach where it went wrong.' : 'Well played!')
+                    : 'Nobody made a wrong move — ask the coach for ideas to sharpen it next time.'}
               </p>
               <div className="go-actions">
                 <button type="button" className="primary" onClick={() => { if (mode === 'watch') startWatch(); else if (mode === 'online') requestNewGame(); else newGame(); }}>{mode === 'watch' ? 'Watch another' : mode === 'online' ? 'Rematch' : 'New game'}</button>
@@ -705,6 +944,27 @@ export default function Play({ stageTitle }) {
               </div>
             </div>
           )}
+          {mode === 'online' && (
+            <div className="online-chat panel">
+              <div className="chat-log">
+                {chatLog.length === 0 && <p className="chat-hint">Say hi to your opponent…</p>}
+                {chatLog.map((m, i) => (
+                  <p key={i} className={`chat-msg ${m.who}`}>{m.text}</p>
+                ))}
+              </div>
+              <form className="chat-input" onSubmit={(e) => { e.preventDefault(); sendChat(); }}>
+                <input
+                  value={chatInput}
+                  onChange={(e) => setChatInput(e.target.value)}
+                  placeholder="Message…"
+                  maxLength={300}
+                  aria-label="Chat message"
+                />
+                <button type="submit" disabled={!chatInput.trim()}>Send</button>
+              </form>
+            </div>
+          )}
+          {mode === 'play' && opening && <div className="opening-tag">{opening}</div>}
           <CapturedTray victims={byBlack} advantage={-whiteAdv} pieceColor="white" />
           </>
           )}
@@ -715,6 +975,7 @@ export default function Play({ stageTitle }) {
           <h3 className="game-side-title">Moves</h3>
           <span className="game-side-caret" aria-hidden="true">{movesOpen ? '›' : '‹'}</span>
         </button>
+        {opening && <p className="opening-side">{opening}</p>}
         {movesOpen && (
         <ol className="move-list" ref={moveListRef}>
           {(() => {
@@ -738,6 +999,14 @@ export default function Play({ stageTitle }) {
           })()}
         </ol>
         )}
+        <div className="results-line">
+          {mode === 'online'
+            ? <>Online: <strong>{results.online.w}W</strong> · <strong>{results.online.l}L</strong> · <strong>{results.online.d}D</strong></>
+            : (() => {
+              const r = results.engine[difficulty.id] || { w: 0, l: 0, d: 0 };
+              return <>vs {difficulty.label}: <strong>{r.w}W</strong> · <strong>{r.l}L</strong> · <strong>{r.d}D</strong></>;
+            })()}
+        </div>
       </aside>
     </div>
   );
