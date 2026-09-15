@@ -41,6 +41,19 @@ function loadSavedOnline() {
   try { return JSON.parse(localStorage.getItem(ONLINE_SAVE_KEY)); } catch { return null; }
 }
 
+/** Human-readable versions of PeerJS error types. */
+function onlineErrorText(e) {
+  const type = typeof e === 'string' ? e : e?.type;
+  switch (type) {
+    case 'peer-unavailable': return 'No game found with that code — check it and try again.';
+    case 'negotiation-failed': return "Couldn't reach the other player — ask them to reopen the game, then rejoin.";
+    case 'unavailable-id': return 'That game code is taken — create a new one.';
+    case 'network': return 'Network error reaching the matchmaking server — check your connection.';
+    case 'server-error': return 'The matchmaking server is unavailable — try again in a moment.';
+    default: return `Connection failed (${type || 'unknown error'}).`;
+  }
+}
+
 /** Piece that a move from->to will capture (handles en passant). */
 function findVictim(g, from, to) {
   const direct = g.get(to);
@@ -94,6 +107,7 @@ export default function Play({ stageTitle }) {
     return !window.matchMedia(MOBILE_QUERY).matches;
   });
   const settingsRef = useRef(null);
+  const menuRef = useRef(null);
   const moveListRef = useRef(null);
   const abort = useRef(false);
   const watchDiffs = useRef(null); // per-side difficulty in watch mode
@@ -109,6 +123,7 @@ export default function Play({ stageTitle }) {
   const [joinCode, setJoinCode] = useState('');
   const [chatLog, setChatLog] = useState([]); // [{who:'me'|'opp', text}]
   const [chatInput, setChatInput] = useState('');
+  const [menuOpen, setMenuOpen] = useState(false); // mobile game menu
   const [onlineOver, setOnlineOver] = useState(null); // 'win'|'lose'|'draw'|'win-resign'|'lose-resign'|'draw-agreed'
   const [pendingOffer, setPendingOffer] = useState(null); // {kind:'draw'|'takeback'} we received
   const [rejoin, setRejoin] = useState(savedOnline?.code ? savedOnline : null); // restorable online game
@@ -187,6 +202,15 @@ export default function Play({ stageTitle }) {
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
   }, [settingsOpen]);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onPointerDown(e) {
+      if (menuRef.current && !menuRef.current.contains(e.target)) setMenuOpen(false);
+    }
+    document.addEventListener('pointerdown', onPointerDown);
+    return () => document.removeEventListener('pointerdown', onPointerDown);
+  }, [menuOpen]);
 
   // wrap game with metadata for the coach
   const coachGame = useMemo(() => {
@@ -373,7 +397,7 @@ export default function Play({ stageTitle }) {
       },
       onData: onlineHostData,
       onClose: () => setOppGone(true),
-      onError: (e) => setOnline((o) => ({ ...o, status: o.status === 'playing' ? o.status : 'error', error: String(e?.type || e) })),
+      onError: (e) => setOnline((o) => ({ ...o, status: o.status === 'playing' ? o.status : 'error', error: onlineErrorText(e) })),
     });
     onlineRef.current = { ...(onlineRef.current || {}), peer, conn: null, role: 'host' };
     setOnline({ status: 'waiting', code, role: 'host', error: '' });
@@ -391,7 +415,7 @@ export default function Play({ stageTitle }) {
       },
       onData: onlineGuestData,
       onClose: () => setOppGone(true),
-      onError: (e) => setOnline((o) => ({ ...o, status: o.status === 'playing' ? o.status : 'error', error: String(e?.type || e) })),
+      onError: (e) => setOnline((o) => ({ ...o, status: o.status === 'playing' ? o.status : 'error', error: onlineErrorText(e) })),
     });
     onlineRef.current = { ...(onlineRef.current || {}), peer, conn: null, role: 'guest' };
     setOnline({ status: 'connecting', code, role: 'guest', error: '' });
@@ -553,7 +577,7 @@ export default function Play({ stageTitle }) {
         },
         onData: onlineHostData,
         onClose: () => setOppGone(true),
-        onError: (e) => setOnline((o) => ({ ...o, status: 'error', error: String(e?.type || e) })),
+        onError: (e) => setOnline((o) => ({ ...o, status: 'error', error: onlineErrorText(e) })),
       });
       onlineRef.current.peer = peer;
       setMode('online');
@@ -768,6 +792,33 @@ export default function Play({ stageTitle }) {
               <option value="w">White</option>
               <option value="b">Black</option>
             </select>
+            {isMobile ? (
+              <div className="settings-trigger" ref={menuRef}>
+                <button
+                  type="button"
+                  className={`icon-btn${menuOpen ? ' active' : ''}`}
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-label="Game menu"
+                  title="Game menu"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                    <path fill="currentColor" d="M4 7h16v2H4V7Zm0 4h16v2H4v-2Zm0 4h16v2H4v-2Z" />
+                  </svg>
+                </button>
+                {menuOpen && (
+                  <div className="side dropdown-panel mobile-menu">
+                    <button type="button" onClick={() => { setMenuOpen(false); abort.current = true; if (mode === 'online') requestNewGame(); else { newGame(); setMode('play'); } }}>New game</button>
+                    <button type="button" onClick={() => { setMenuOpen(false); abort.current = true; mode === 'watch' ? stopWatch() : startWatch(); }}>
+                      {mode === 'watch' ? 'Stop watching' : 'Watch a game'}
+                    </button>
+                    <button type="button" onClick={() => { setMenuOpen(false); if (online.status === 'playing') leaveOnline(); else openLobby(); }}>
+                      {online.status === 'playing' ? 'Leave online game' : 'Play online'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            ) : (
+            <>
             <button className="toolbar-new-game" onClick={() => { abort.current = true; if (mode === 'online') requestNewGame(); else { newGame(); setMode('play'); } }}>New game</button>
             <button
               className={`toolbar-watch${mode === 'watch' ? ' active' : ''}`}
@@ -783,6 +834,8 @@ export default function Play({ stageTitle }) {
             >
               {online.status === 'playing' ? 'Leave online game' : 'Play online'}
             </button>
+            </>
+            )}
             <div className="settings-trigger" ref={settingsRef}>
               <button
                 type="button"
@@ -838,7 +891,7 @@ export default function Play({ stageTitle }) {
                 </>
               )}
               {online.status === 'connecting' && <p className="side-note">Connecting to game <strong>{online.code}</strong>…</p>}
-              {online.status === 'error' && <p className="online-error">Couldn't connect ({online.error}). Check the code and try again.</p>}
+              {online.status === 'error' && <p className="online-error">{online.error || "Couldn't connect — please try again."}</p>}
               <button type="button" className="mini" onClick={leaveOnline}>Cancel</button>
             </div>
           ) : (
