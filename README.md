@@ -17,6 +17,16 @@ Learn chess properly: staged lessons, honest engine difficulty, and an AI coach 
 - **Three hand-crafted themes** — Walnut Study, Folio, Ember Library. No neon.
 - **PWA** — installable on your phone (Add to Home Screen), works offline after first load.
 - **Responsive** — phone, tablet, desktop.
+- **Online multiplayer** — play a friend over the internet: create a game, share the 6-letter code, and moves travel peer-to-peer (WebRTC via PeerJS; the host's browser is authoritative, so illegal moves are rejected). Hosted at https://h-n-i-c.github.io/maestro-chess/ (GitHub Pages, deployed automatically from `main`); or self-host the container below.
+- **Observe mode** — watch Maestro play itself with pause/speed/rewind controls and live coach commentary.
+
+## Play a friend online
+
+1. Both players open the app (the Pages URL above, or your self-hosted container).
+2. One clicks **Play online → Create a game** and shares the 6-letter code.
+3. The other clicks **Play online**, enters the code, and plays Black.
+
+No server-side game state: the creator's browser validates every move, so games can't desync.
 
 ## Run with Podman
 
