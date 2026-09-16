@@ -368,7 +368,7 @@ button.mini { border: 1px solid var(--line); background: none; border-radius: 8p
   padding: clamp(8px, 1.6vw, 16px);
   background: var(--board-frame); border-radius: 14px; box-shadow: var(--shadow);
 }
-.board { position: relative; display: grid; grid-template-columns: repeat(8, 1fr); aspect-ratio: 1; border-radius: 6px; overflow: hidden; }
+.board { position: relative; display: grid; grid-template-columns: repeat(8, 1fr); aspect-ratio: 1; border-radius: 6px; overflow: hidden; container-type: inline-size; }
 .sq {
   position: relative; border: none; padding: 0; aspect-ratio: 1;
   display: flex; align-items: center; justify-content: center;
@@ -397,7 +397,9 @@ button.mini { border: 1px solid var(--line); background: none; border-radius: 8p
 /* ---- animated piece layer ---- */
 .pieces {
   position: absolute; inset: 0; pointer-events: none; z-index: 2;
-  font-size: clamp(18px, 5.4vmin, 42px);
+  /* 6.6cqw of the board = ~53% of a square, so glyphs fit their square
+     at any board size (vmin broke small lesson/demo boards) */
+  font-size: clamp(12px, 6.6cqw, 42px);
 }
 /* outer span: square placement + sliding */
 .piece-pos {
@@ -443,7 +445,7 @@ button.mini { border: 1px solid var(--line); background: none; border-radius: 8p
 .promo-btn {
   position: absolute; width: 12.5%; height: 12.5%;
   display: flex; align-items: center; justify-content: center;
-  font-size: clamp(18px, 5.4vmin, 42px); line-height: 1;
+  font-size: clamp(12px, 6.6cqw, 42px); line-height: 1;
   border: none; cursor: pointer;
   background: var(--panel);
   box-shadow: var(--shadow);
