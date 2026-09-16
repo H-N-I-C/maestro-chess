@@ -31,7 +31,7 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
     convo.push({ role: 'user', content });
     setMessages((ms) => [...ms, { role: 'user', text: content }]);
     try {
-      const { reply, live: isLive, error } = await askCoach({
+      const { reply, live: isLive, error, model: replyModel } = await askCoach({
         messages: convo,
         game: game ? {
           fen: game.fen(),
@@ -43,7 +43,7 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
         } : undefined,
       });
       setLive(isLive ? 'live' : 'offline');
-      setModel(isLive ? model : null);
+      setModel(isLive ? replyModel : null);
       setMessages((ms) => [...ms, { role: 'coach', text: reply || `Coach error: ${error || 'unknown'}` }]);
     } finally {
       setBusy(false);

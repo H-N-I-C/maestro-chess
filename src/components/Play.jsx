@@ -16,15 +16,23 @@ const ONLINE_SAVE_KEY = 'maestro-online';
 const RESULTS_KEY = 'maestro-results';
 
 function loadResults() {
+  const tally = (t) => t && typeof t === 'object' && ['w', 'l', 'd'].every((k) => Number.isFinite(t[k]));
   try {
     const r = JSON.parse(localStorage.getItem(RESULTS_KEY));
-    if (r && r.online) return r;
+    // r.engine is keyed by difficulty id, so an empty object is valid;
+    // every entry that exists must still be a well-formed w/l/d tally
+    if (r && tally(r.online) && r.engine && typeof r.engine === 'object' && Object.values(r.engine).every(tally)) return r;
   } catch { /* ignore */ }
   return { engine: {}, online: { w: 0, l: 0, d: 0 } };
 }
 const MOBILE_QUERY = '(max-width: 760px)';
 
 const PIECE_VALUE = { p: 1, n: 3, b: 3, r: 5, q: 9 };
+
+/** Coach-facing label, e.g. "Club (~1200)". */
+function difficultyLabel(d) {
+  return `${d.label} (~${d.elo || 2800})`;
+}
 
 const WATCH_PROMPTS = [
   "You're commentating a game between two engines for a student who is watching to learn. In 2-4 sentences: what are each side's plans, and what should the viewer pay attention to?",
@@ -74,7 +82,7 @@ function CapturedTray({ victims, advantage, pieceColor }) {
   );
 }
 
-export default function Play({ stageTitle }) {
+export default function Play() {
   const saved = useMemo(loadSavedGame, []);
   const savedOnline = useMemo(loadSavedOnline, []);
   const [difficulty, setDifficulty] = useState(() => DIFFICULTIES.find(d => d.id === saved?.difficultyId) || DIFFICULTIES[2]);
@@ -109,7 +117,7 @@ export default function Play({ stageTitle }) {
   const settingsRef = useRef(null);
   const menuRef = useRef(null);
   const moveListRef = useRef(null);
-  const abort = useRef(false);
+  const gameId = useRef(0); // bumped whenever a new game starts; in-flight engine searches from an older id are dropped
   const watchDiffs = useRef(null); // per-side difficulty in watch mode
   const coachRef = useRef(null);
   const lastCommentedPly = useRef(0);
@@ -188,9 +196,14 @@ export default function Play({ stageTitle }) {
 
   // if the saved position had the engine to move (e.g. player refreshed
   // while Maestro was thinking), let it reply now
+  const resumedEngineReply = useRef(false); // StrictMode double-runs this effect in dev
   useEffect(() => {
+    if (resumedEngineReply.current) return;
     if (saved?.online) return;
-    if (mode === 'play' && game.turn() !== color && !game.isGameOver()) engineReply(game, difficulty);
+    if (mode === 'play' && game.turn() !== color && !game.isGameOver()) {
+      resumedEngineReply.current = true;
+      engineReply(game, difficulty);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -215,17 +228,16 @@ export default function Play({ stageTitle }) {
   // wrap game with metadata for the coach
   const coachGame = useMemo(() => {
     const g = game;
-    g.stageTitle = stageTitle;
-    g.difficultyLabel = `${difficulty.label} (~${difficulty.elo || 2800})`;
+    g.difficultyLabel = difficultyLabel(difficulty);
     g.humanColor = color;
     return g;
-  }, [game, difficulty, color, stageTitle]);
+  }, [game, difficulty, color]);
 
   function newGame(c = color, d = difficulty) {
-    abort.current = false;
+    gameId.current += 1;
+    resultRecorded.current = false;
     const g = new Chess();
-    g.stageTitle = stageTitle;
-    g.difficultyLabel = `${d.label}`;
+    g.difficultyLabel = difficultyLabel(d);
     g.humanColor = c;
     setGame(g);
     setLastMove(null);
@@ -237,10 +249,11 @@ export default function Play({ stageTitle }) {
   }
 
   async function engineReply(g, d) {
+    const id = gameId.current;
     setThinking(true);
     try {
       const mv = await bestMove(g.fen(), d);
-      if (abort.current) return;
+      if (id !== gameId.current) return; // a new game started while searching
       setGame((prev) => {
         const next = new Chess(prev.fen());
         try {
@@ -254,8 +267,7 @@ export default function Play({ stageTitle }) {
           setLastMove(lm);
           setHistory((h) => [...(h || [{ fen: prev.fen(), lastMove: null }]), { fen: next.fen(), lastMove: lm, victim: victim || null }]);
         } catch { /* illegal — ignore */ }
-        next.stageTitle = stageTitle;
-        next.difficultyLabel = d.label;
+        next.difficultyLabel = difficultyLabel(d);
         next.humanColor = color;
         return next;
       });
@@ -270,7 +282,8 @@ export default function Play({ stageTitle }) {
   }
 
   function startWatch() {
-    abort.current = false;
+    gameId.current += 1;
+    resultRecorded.current = false;
     watchDiffs.current = { w: randomDifficulty(), b: randomDifficulty() };
     lastCommentedPly.current = 0;
     watchSummarized.current = false;
@@ -368,7 +381,7 @@ export default function Play({ stageTitle }) {
   }
 
   function openLobby() {
-    abort.current = true;
+    gameId.current += 1;
     setMode('play');
     setOnline({ status: 'idle', code: '', role: null, error: '' });
   }
@@ -448,6 +461,7 @@ export default function Play({ stageTitle }) {
     }
     if (d.t === 'move' && s.mode === 'online') {
       const g = new Chess(s.game.fen());
+      if (g.get(d.from)?.color !== 'b') return; // the guest only moves Black
       let moved;
       try { moved = g.move({ from: d.from, to: d.to, promotion: d.promotion }); } catch { return; }
       const victim = findVictim(s.game, d.from, d.to);
@@ -649,7 +663,8 @@ export default function Play({ stageTitle }) {
     else if (game.isStalemate()) s = 'Stalemate — draw.';
     else if (game.isDraw()) s = 'Draw.';
     setStatus(s);
-    // record the result once per finished game
+    // record the result once per finished game (a watched engine game is not a result)
+    if (mode === 'watch') return;
     if (resultRecorded.current) return;
     resultRecorded.current = true;
     setResults((r) => {
@@ -671,6 +686,24 @@ export default function Play({ stageTitle }) {
       return next;
     });
   }, [game, color]); // eslint-disable-line
+
+  // online games can end by resignation or an agreed draw without the
+  // board position being terminal — tally those once, like the effect above
+  useEffect(() => {
+    if (!onlineOver) return;
+    const outcome = onlineOver === 'win-resign' ? 'w'
+      : onlineOver === 'lose-resign' ? 'l'
+      : onlineOver === 'draw-agreed' ? 'd'
+      : null;
+    if (!outcome || resultRecorded.current) return;
+    resultRecorded.current = true;
+    setResults((r) => {
+      const next = JSON.parse(JSON.stringify(r));
+      next.online[outcome] += 1;
+      localStorage.setItem(RESULTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, [onlineOver]);
 
   function onMove({ from, to, promotion }) {
     if (mode === 'watch') return;
@@ -707,8 +740,7 @@ export default function Play({ stageTitle }) {
     try {
       moved = g.move({ from, to, promotion });
     } catch { return; }
-    g.stageTitle = stageTitle;
-    g.difficultyLabel = difficulty.label;
+    g.difficultyLabel = difficultyLabel(difficulty);
     g.humanColor = color;
     const lm = { from, to, san: moved.san, color: moved.color, piece: moved.piece };
     const victim = findVictim(game, from, to);
@@ -731,7 +763,7 @@ export default function Play({ stageTitle }) {
   const opening = useMemo(() => {
     try { return openingName(game.history()); } catch { return null; }
   }, [game]);
-  function stepPrev() { setViewIndex((i) => (i === null ? history.length - 2 : Math.max(0, i - 1))); }
+  function stepPrev() { setViewIndex((i) => (i === null ? (history?.length || 1) - 2 : Math.max(0, i - 1))); }
   function stepNext() {
     setViewIndex((i) => {
       if (i === null) return null;
@@ -807,8 +839,8 @@ export default function Play({ stageTitle }) {
                 </button>
                 {menuOpen && (
                   <div className="side dropdown-panel mobile-menu">
-                    <button type="button" onClick={() => { setMenuOpen(false); abort.current = true; if (mode === 'online') requestNewGame(); else { newGame(); setMode('play'); } }}>New game</button>
-                    <button type="button" onClick={() => { setMenuOpen(false); abort.current = true; mode === 'watch' ? stopWatch() : startWatch(); }}>
+                    <button type="button" onClick={() => { setMenuOpen(false); gameId.current += 1; if (mode === 'online') requestNewGame(); else { newGame(); setMode('play'); } }}>New game</button>
+                    <button type="button" onClick={() => { setMenuOpen(false); gameId.current += 1; mode === 'watch' ? stopWatch() : startWatch(); }}>
                       {mode === 'watch' ? 'Stop watching' : 'Watch a game'}
                     </button>
                     <button type="button" onClick={() => { setMenuOpen(false); if (online.status === 'playing') leaveOnline(); else openLobby(); }}>
@@ -819,10 +851,10 @@ export default function Play({ stageTitle }) {
               </div>
             ) : (
             <>
-            <button className="toolbar-new-game" onClick={() => { abort.current = true; if (mode === 'online') requestNewGame(); else { newGame(); setMode('play'); } }}>New game</button>
+            <button className="toolbar-new-game" onClick={() => { gameId.current += 1; if (mode === 'online') requestNewGame(); else { newGame(); setMode('play'); } }}>New game</button>
             <button
               className={`toolbar-watch${mode === 'watch' ? ' active' : ''}`}
-              onClick={() => { abort.current = true; mode === 'watch' ? stopWatch() : startWatch(); }}
+              onClick={() => { gameId.current += 1; mode === 'watch' ? stopWatch() : startWatch(); }}
               title={mode === 'watch' ? 'Stop watching and start your own game' : 'Watch Maestro play against itself'}
             >
               {mode === 'watch' ? 'Stop watching' : 'Watch a game'}

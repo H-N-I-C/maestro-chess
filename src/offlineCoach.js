@@ -9,7 +9,8 @@ const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 function describeEval(cp, side) {
   const pawns = Math.abs(cp) / 100;
   if (pawns < 0.3) return 'roughly equal';
-  const who = (cp > 0) === (side === 'w') ? 'you' : 'your opponent';
+  const betterSide = cp > 0 ? side : (side === 'w' ? 'b' : 'w');
+  const who = betterSide === 'w' ? 'White' : 'Black';
   if (pawns < 1) return `slightly better for ${who}`;
   if (pawns < 2.5) return `better for ${who} (~${Math.round(pawns)} pawns)`;
   return `clearly winning for ${who}`;
@@ -18,19 +19,19 @@ function describeEval(cp, side) {
 /** Simple attack/defender audit: find pieces attacked more than defended. */
 function hangingPieces(fen) {
   const g = new Chess(fen);
-  const turn = g.turn();
-  const enemy = turn === 'w' ? 'b' : 'w';
   const report = [];
   const board = g.board();
   for (let r = 0; r < 8; r++) {
     for (let c = 0; c < 8; c++) {
-      const sq = piece => `${'abcdefgh'[c]}${8 - r}`;
+      const square = `${'abcdefgh'[c]}${8 - r}`;
       const p = board[r][c];
       if (!p) continue;
-      const attackers = g.attackers(sq(), enemy).length;
-      const defenders = g.attackers(sq(), p.color).length;
-      if (p.color === turn && attackers > defenders && PIECE_VALUES[p.type] >= 3 && attackers > 0) {
-        report.push(`your ${p.type === 'n' ? 'knight' : p.type === 'b' ? 'bishop' : p.type === 'r' ? 'rook' : 'queen'} on ${sq()} is attacked ${attackers}× and defended only ${defenders}×`);
+      const enemy = p.color === 'w' ? 'b' : 'w';
+      const attackers = g.attackers(square, enemy).length;
+      const defenders = g.attackers(square, p.color).length;
+      if (attackers > defenders && PIECE_VALUES[p.type] >= 3 && attackers > 0) {
+        const name = p.type === 'n' ? 'knight' : p.type === 'b' ? 'bishop' : p.type === 'r' ? 'rook' : 'queen';
+        report.push(`${p.color === 'w' ? 'White' : 'Black'}'s ${name} on ${square} is attacked ${attackers}× and defended only ${defenders}×`);
       }
     }
   }
@@ -61,7 +62,6 @@ export async function offlineCoachReply({ fen, pgn, message, history, stage }) {
   lines.push(`Looking at the position: it's ${describeEval(after.cp ?? 0, side)}.`);
 
   if (before && before.cpBefore != null && after.cp != null) {
-    const swing = (after.cp - before.cpBefore) * (side === 'w' ? -1 : 1);
     // swing from perspective of the side that just moved
     const movedSide = side === 'w' ? 'b' : 'w';
     const theirSwing = (after.cp - before.cpBefore) * (movedSide === 'w' ? 1 : -1);
@@ -90,7 +90,6 @@ async function evalAfterLastMove(pgn) {
     g.loadPgn(pgn);
     const moves = g.history();
     if (moves.length < 1) return null;
-    const last = moves[moves.length - 1];
     const g2 = new Chess();
     g2.loadPgn(pgn);
     g2.undo();

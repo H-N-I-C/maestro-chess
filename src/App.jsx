@@ -11,7 +11,6 @@ const THEMES = [
 export default function App() {
   const [tab, setTab] = useState('play');
   const [theme, setTheme] = useState(() => localStorage.getItem('maestro-theme') || 'walnut');
-  const [stageTitle, setStageTitle] = useState('General play');
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -40,7 +39,7 @@ export default function App() {
         </label>
       </header>
       <main>
-        {tab === 'play' ? <Play stageTitle={stageTitle} /> : <Lessons />}
+        {tab === 'play' ? <Play /> : <Lessons />}
       </main>
     </div>
   );

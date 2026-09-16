@@ -29,11 +29,26 @@ export async function askCoach({ messages, game }) {
         logCoachEntry({
           mode: 'live', model: data.model, ok: false,
           latencyMs: Math.round(performance.now() - started),
-          error: data.error.slice(0, 200),
+          error: String(data.error).slice(0, 200),
           question: lastUser?.content?.slice(0, 120),
         });
         return { reply: null, live: false, error: data.error };
       }
+      if (data.offline) {
+        logCoachEntry({
+          mode: 'live', model: null, ok: false,
+          latencyMs: Math.round(performance.now() - started),
+          error: 'no API key on server',
+          question: lastUser?.content?.slice(0, 120),
+        });
+      }
+    } else {
+      logCoachEntry({
+        mode: 'live', model: null, ok: false,
+        latencyMs: Math.round(performance.now() - started),
+        error: `server responded ${res.status}`,
+        question: lastUser?.content?.slice(0, 120),
+      });
     }
   } catch (err) {
     logCoachEntry({

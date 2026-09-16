@@ -152,10 +152,10 @@ export const LESSONS = [
   {
     id: 'mate-in-2', stage: 'tactics-2', title: 'Mate in Two — Thinking Forcing Moves',
     intro: `Mate in one is pattern recognition; mate in two is discipline. Method:\n\n1. List EVERY check.\n2. For each check, list every legal reply.\n3. If all but one reply are impossible, calculate that one reply — does mate follow?\n\nRestricting the king is the key skill: checks that drive the king into a corner, quiet moves that take away escape squares (quiet moves are the hard part — look for them first).`,
-    demoFen: '6k1/6pp/8/8/8/8/8/3Q2K1 w - - 0 1',
-    demoNote: 'Qd8+ Kh7, Qg8# — or Qxg7# if the king retreats. One check, one reply, one final blow.',
+    demoFen: '6k1/6pp/4R3/8/8/8/8/3Q2K1 w - - 0 1',
+    demoNote: 'Qd8+! — the only legal reply is Kf7: h7 is blocked by Black\'s own pawn, f8 and g8 are covered by the queen, and e7 is covered by the rook on e6. Then Qe8# — the queen steps over, guarded by the rook on the e-file, and the rook covers every flight square on the 6th rank. One check, one reply, one final blow.',
     puzzles: [
-      { fen: '6k1/6pp/8/8/8/8/8/3Q2K1 w - - 0 1', prompt: 'White to play — start mate in two (the forcing first move).', accept: ['Qd8+'], hint: 'Back-rank check. Where can the king run — and what follows?' }
+      { fen: '6k1/6pp/4R3/8/8/8/8/3Q2K1 w - - 0 1', prompt: 'White to play — start mate in two (the forcing first move).', accept: ['Qd8+'], hint: 'Back-rank check. Where can the king run — and what follows?' }
     ],
     coachFocus: 'Mate in two method: enumerate checks, enumerate replies, calculate the single branch.',
   },

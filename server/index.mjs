@@ -46,10 +46,48 @@ app.get('/api/coach/status', (req, res) => {
   });
 });
 
+/* simple in-memory rate limiter: RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW ms per ip */
+const rateLimit = new Map();
+const RATE_LIMIT_MAX = 10;
+const RATE_LIMIT_WINDOW = 60_000;
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [ip, entry] of rateLimit) {
+    if (entry.resetAt <= now) rateLimit.delete(ip);
+  }
+}, RATE_LIMIT_WINDOW).unref?.();
+
+function isRateLimited(ip) {
+  const now = Date.now();
+  const entry = rateLimit.get(ip);
+  if (!entry || entry.resetAt <= now) {
+    rateLimit.set(ip, { count: 1, resetAt: now + RATE_LIMIT_WINDOW });
+    return false;
+  }
+  entry.count += 1;
+  return entry.count > RATE_LIMIT_MAX;
+}
+
+function isValidBaseUrl(base) {
+  try {
+    const url = new URL(base);
+    return (url.protocol === 'http:' || url.protocol === 'https:') && Boolean(url.hostname);
+  } catch {
+    return false;
+  }
+}
+
 app.post('/api/coach', async (req, res) => {
+  if (isRateLimited(req.ip)) {
+    return res.status(429).json({ error: 'rate limited' });
+  }
   const { key, base, model } = resolveCoach(req.body?.config);
   if (!key) {
     return res.status(200).json({ ok: false, offline: true, reply: null, model: null });
+  }
+  if (!isValidBaseUrl(base)) {
+    return res.status(200).json({ ok: false, error: 'invalid base URL' });
   }
   const { messages, game } = req.body || {};
 

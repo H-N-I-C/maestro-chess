@@ -4,6 +4,8 @@ import Board from './Board.jsx';
 import CoachPanel from './CoachPanel.jsx';
 import { STAGES, lessonsForStage } from '../lessons.js';
 
+const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
 function PuzzleBoard({ puzzle, onSolved }) {
   const [game, setGame] = useState(() => new Chess(puzzle.fen));
   const [done, setDone] = useState(false);
@@ -47,7 +49,7 @@ function PuzzleBoard({ puzzle, onSolved }) {
 function LessonView({ lesson, onBack }) {
   const [solved, setSolved] = useState(0);
   const coachGame = useMemo(() => {
-    const g = new Chess(lesson.demoFen || lesson.puzzles[0]?.fen || 'start');
+    const g = new Chess(lesson.demoFen || lesson.puzzles[0]?.fen || START_FEN);
     g.stageTitle = lesson.title;
     g.difficultyLabel = 'Lesson mode';
     g.humanColor = 'w';
