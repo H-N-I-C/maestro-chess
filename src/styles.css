@@ -162,6 +162,29 @@ button.primary, .coach-input button, .side-actions .primary {
 }
 
 /* ============ captured pieces ============ */
+/* Desktop: both trays ride in a rail fixed to the right of the board,
+   immediately left of the move-list panel (matches its expanded/collapsed
+   width). Mobile keeps the trays inline above/below the board. */
+.captured-rail {
+  position: fixed; z-index: 25;
+  top: calc(56px + var(--pad)); bottom: var(--pad);
+  right: calc(var(--pad) + 210px + 12px);
+  width: 64px;
+  display: flex; flex-direction: column; justify-content: space-between;
+  padding: 4px 0;
+  transition: right .18s ease;
+  pointer-events: none;
+}
+.captured-rail.moves-collapsed { right: calc(var(--pad) + 40px + 12px); }
+.captured-rail .captured-tray { max-width: none; font-size: 19px; }
+.captured-rail .ct-adv { margin-left: 10px; }
+.captured-inline { width: 100%; max-width: 640px; display: flex; justify-content: center; }
+@media (min-width: 901px) {
+  .captured-inline { display: none; }
+}
+@media (max-width: 900px) {
+  .captured-rail { display: none; }
+}
 .captured-tray {
   display: flex; align-items: center; flex-wrap: wrap; gap: 0;
   min-height: 26px; width: 100%; max-width: 640px;

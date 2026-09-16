@@ -936,7 +936,7 @@ export default function Play() {
               <button type="button" className="mini" onClick={declineOffer}>Decline</button>
             </div>
           )}
-          <CapturedTray victims={byWhite} advantage={whiteAdv} pieceColor="black" />
+          <div className="captured-inline"><CapturedTray victims={byWhite} advantage={whiteAdv} pieceColor="black" /></div>
           <Board fen={boardFen} orientation={color} onMove={onMove} lastMove={boardLastMove} viewOnly={viewing || mode === 'watch' || !!onlineOver || (mode === 'online' && game.turn() !== color)} />
           {mode === 'online' && !onlineOver && (
             <div className="online-actions">
@@ -1050,11 +1050,17 @@ export default function Play() {
             </div>
           )}
           {mode === 'play' && opening && <div className="opening-tag">{opening}</div>}
-          <CapturedTray victims={byBlack} advantage={-whiteAdv} pieceColor="white" />
+          <div className="captured-inline"><CapturedTray victims={byBlack} advantage={-whiteAdv} pieceColor="white" /></div>
           </>
           )}
         </div>
       </div>
+      {(online.status === 'off' || online.status === 'playing') && (
+        <div className={`captured-rail${movesOpen ? '' : ' moves-collapsed'}`} aria-hidden="true">
+          <CapturedTray victims={byWhite} advantage={whiteAdv} pieceColor="black" />
+          <CapturedTray victims={byBlack} advantage={-whiteAdv} pieceColor="white" />
+        </div>
+      )}
       <aside className={`game-side panel${movesOpen ? '' : ' collapsed'}`} aria-label="Move list">
         <button type="button" className="game-side-head" onClick={() => setMovesOpen((v) => !v)} aria-expanded={movesOpen} title={movesOpen ? 'Collapse move list' : 'Expand move list'}>
           <h3 className="game-side-title">Moves</h3>
