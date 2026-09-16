@@ -888,6 +888,7 @@ export default function Play() {
           </div>
         </div>
         <div className="board-area">
+          <div className="board-col">
           {rejoin && online.status === 'off' && (
             <div className="rejoin-bar panel">
               <span>You have an online game in progress (code <strong>{rejoin.code}</strong>).</span>
@@ -1053,6 +1054,7 @@ export default function Play() {
           <div className="captured-inline"><CapturedTray victims={byBlack} advantage={-whiteAdv} pieceColor="white" /></div>
           </>
           )}
+          </div>
         </div>
       </div>
       {(online.status === 'off' || online.status === 'playing') && (
