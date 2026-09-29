@@ -128,8 +128,8 @@ button.primary, .coach-input button, .side-actions .primary {
 /* ============ move list (game side panel) ============ */
 .game-side {
   position: fixed; z-index: 30; right: var(--pad);
-  top: calc(56px + var(--pad)); bottom: var(--pad);
-  width: 210px; margin: 0;
+  top: 116px; bottom: var(--pad);
+  width: 270px; margin: 0;
   display: flex; flex-direction: column; overflow: hidden;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
   transition: width .18s ease;
@@ -154,14 +154,23 @@ button.primary, .coach-input button, .side-actions .primary {
   list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1;
   display: flex; flex-direction: column; gap: 2px; font-size: 14px;
 }
-.move-list li { display: grid; grid-template-columns: 30px 1fr 1fr; align-items: center; }
+.move-list li { display: grid; grid-template-columns: 30px minmax(0, 1fr) minmax(0, 1fr); align-items: center; }
 .mv-num { color: var(--muted); font-size: 12.5px; text-align: right; padding-right: 8px; }
 .move-list .mv {
   border: none; background: none; text-align: left; padding: 4px 8px;
   border-radius: 6px; font-size: 14px; color: var(--ink);
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .move-list .mv:hover { background: var(--bg2); }
 .move-list .mv.active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
+.game-side .last-move-line {
+  margin: 8px 8px 0; width: calc(100% - 16px); min-width: 0;
+  justify-content: flex-start; overflow: hidden;
+}
+.game-side .last-move-line .lm-text {
+  display: block; min-width: 0; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
 @media (max-width: 900px) {
   .game-side { display: none; }
 }
@@ -172,8 +181,8 @@ button.primary, .coach-input button, .side-actions .primary {
    width). Mobile keeps the trays inline above/below the board. */
 .captured-rail {
   position: fixed; z-index: 25;
-  top: calc(56px + var(--pad)); bottom: var(--pad);
-  right: calc(var(--pad) + 210px + 12px);
+  top: 116px; bottom: var(--pad);
+  right: calc(var(--pad) + 270px + 12px);
   width: 64px;
   display: flex; flex-direction: column; justify-content: space-between;
   padding: 4px 0;
@@ -297,8 +306,11 @@ button.primary, .coach-input button, .side-actions .primary {
 
 /* ---- game over ---- */
 .game-over {
+  position: fixed; z-index: 80; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(360px, calc(100vw - 32px));
   display: flex; flex-direction: column; align-items: center; gap: 6px;
-  padding: 14px 22px; animation: arrow-in .3s ease;
+  padding: 18px 24px; animation: arrow-in .3s ease;
 }
 .go-title { margin: 0; font-size: 17px; font-weight: 600; }
 .go-detail { margin: 0; font-size: 13px; color: var(--muted); }
@@ -406,7 +418,7 @@ button.mini { border: 1px solid var(--line); background: none; border-radius: 8p
   position: absolute; left: 0; top: 0;
   width: 12.5%; height: 12.5%;
   display: flex; align-items: center; justify-content: center;
-  transition: transform .22s cubic-bezier(.25, .9, .3, 1.2), opacity .22s ease;
+  transition: transform .32s cubic-bezier(.2, .85, .25, 1.08), opacity .24s ease;
   will-change: transform;
 }
 .piece-pos.captured { opacity: 0; }
@@ -421,7 +433,13 @@ button.mini { border: 1px solid var(--line); background: none; border-radius: 8p
   position: relative; z-index: 3;
 }
 .piece-pos.captured .piece { transform: scale(.55); transition: transform .22s ease; }
+.pieces .piece.moved { animation: piece-hop .32s cubic-bezier(.3, .8, .3, 1); }
 .pieces .piece.spawned { animation: piece-in .24s cubic-bezier(.3, 1.4, .5, 1); }
+@keyframes piece-hop {
+  0% { transform: translateY(0) scale(1); filter: none; }
+  38% { transform: translateY(-10%) scale(1.08); filter: drop-shadow(0 8px 6px rgba(0, 0, 0, .32)); }
+  100% { transform: translateY(0) scale(1); filter: none; }
+}
 @keyframes piece-in {
   from { transform: scale(.4); opacity: 0; }
   to { transform: scale(1); opacity: 1; }

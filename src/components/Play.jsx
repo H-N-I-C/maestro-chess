@@ -983,15 +983,6 @@ export default function Play() {
             )}
           </div>
           )}
-          {boardLastMove && (
-            <div className="last-move-line" aria-live="polite">
-              <span className={`lm-glyph ${boardLastMove.color === 'w' ? 'white' : 'black'}`}>{GLYPHS[boardLastMove.piece]}</span>
-              <span className="lm-text">
-                <strong>{boardLastMove.color === 'w' ? 'White' : 'Black'}</strong> played <strong>{boardLastMove.san}</strong>
-                <span className="lm-sq"> ({boardLastMove.from} → {boardLastMove.to})</span>
-              </span>
-            </div>
-          )}
           <div className="status-line">
             {viewing
               ? `Viewing move ${viewIndex} of ${history.length - 1}`
@@ -1069,6 +1060,15 @@ export default function Play() {
           <span className="game-side-caret" aria-hidden="true">{movesOpen ? '›' : '‹'}</span>
         </button>
         {opening && <p className="opening-side">{opening}</p>}
+        {movesOpen && boardLastMove && (
+          <div className="last-move-line" aria-live="polite">
+            <span className={`lm-glyph ${boardLastMove.color === 'w' ? 'white' : 'black'}`}>{GLYPHS[boardLastMove.piece]}</span>
+            <span className="lm-text">
+              <strong>{boardLastMove.color === 'w' ? 'White' : 'Black'}</strong> played <strong>{boardLastMove.san}</strong>
+              <span className="lm-sq"> ({boardLastMove.from} → {boardLastMove.to})</span>
+            </span>
+          </div>
+        )}
         {movesOpen && (
         <ol className="move-list" ref={moveListRef}>
           {(() => {

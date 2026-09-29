@@ -47,7 +47,7 @@ function reconcile(prev, next) {
     const i = nextEntries.findIndex(([, n]) => n.color === p.color && n.type === p.type);
     if (i >= 0) {
       const [sq] = nextEntries.splice(i, 1)[0];
-      result.push({ ...p, square: sq, status: 'on' });
+      result.push({ ...p, square: sq, status: 'moved' });
     } else {
       result.push({ ...p, status: 'captured' });
     }
@@ -232,7 +232,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
               aria-label={sq}
             >
               {(sq[0] === (flip ? 'h' : 'a')) && <span className="coord rank">{sq[1]}</span>}
-              {(sq[1] === (flip ? '1' : '8')) && <span className="coord file">{sq[0]}</span>}
+              {(sq[1] === (flip ? '8' : '1')) && <span className="coord file">{sq[0]}</span>}
             </button>
           );
         })}
@@ -272,6 +272,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
               'piece',
               p.color === 'w' ? 'white' : 'black',
               p.status === 'new' ? 'spawned' : '',
+              p.status === 'moved' ? 'moved' : '',
               selected === p.square ? 'lifted' : '',
             ].filter(Boolean).join(' ');
             return (
