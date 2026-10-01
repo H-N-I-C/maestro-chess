@@ -4,16 +4,23 @@ import Board, { GLYPHS } from './Board.jsx';
 import CoachPanel from './CoachPanel.jsx';
 import CoachWidget from './CoachWidget.jsx';
 import SidePanel from './SidePanel.jsx';
-import { DIFFICULTIES, bestMove } from '../engine.js';
+import { DIFFICULTIES, bestMove, analyze, customLevel } from '../engine.js';
 import { playMoveSound } from '../sound.js';
 import { hostGame, joinGame, makeCode } from '../online.js';
 import { openingName } from '../openings.js';
+import { resetCoachChat } from '../coachChat.js';
 
 const COACH_OPEN_KEY = 'maestro-coach-open';
 const MOVES_OPEN_KEY = 'maestro-moves-open';
 const GAME_SAVE_KEY = 'maestro-game';
 const ONLINE_SAVE_KEY = 'maestro-online';
 const RESULTS_KEY = 'maestro-results';
+const PIECE_SET_KEY = 'maestro-pieces';
+const COORDS_KEY = 'maestro-show-coords';
+const BLINDFOLD_KEY = 'maestro-blindfold';
+const CUSTOM_ELO_KEY = 'maestro-custom-elo';
+const CLOCK_OPTIONS = [0, 5, 10, 15]; // minutes; 0 = off
+const STALE_SAVE_MS = 14 * 24 * 60 * 60 * 1000; // discard saved games older than 14 days
 
 function loadResults() {
   const tally = (t) => t && typeof t === 'object' && ['w', 'l', 'd'].every((k) => Number.isFinite(t[k]));
@@ -42,11 +49,27 @@ const WATCH_PROMPTS = [
 ];
 
 function loadSavedGame() {
-  try { return JSON.parse(localStorage.getItem(GAME_SAVE_KEY)); } catch { return null; }
+  try {
+    const saved = JSON.parse(localStorage.getItem(GAME_SAVE_KEY));
+    if (!saved) return null;
+    if (saved.savedAt && Date.now() - saved.savedAt > STALE_SAVE_MS) {
+      console.log('Discarding saved game older than 14 days.');
+      localStorage.removeItem(GAME_SAVE_KEY);
+      return null;
+    }
+    return saved;
+  } catch { return null; }
 }
 
 function loadSavedOnline() {
   try { return JSON.parse(localStorage.getItem(ONLINE_SAVE_KEY)); } catch { return null; }
+}
+
+function formatClock(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, '0')}`;
 }
 
 /** Human-readable versions of PeerJS error types. */
@@ -85,7 +108,14 @@ function CapturedTray({ victims, advantage, pieceColor }) {
 export default function Play() {
   const saved = useMemo(loadSavedGame, []);
   const savedOnline = useMemo(loadSavedOnline, []);
-  const [difficulty, setDifficulty] = useState(() => DIFFICULTIES.find(d => d.id === saved?.difficultyId) || DIFFICULTIES[2]);
+  const [customElo, setCustomElo] = useState(() => {
+    const v = Number(localStorage.getItem(CUSTOM_ELO_KEY));
+    return Number.isFinite(v) && v >= 400 && v <= 2800 ? Math.round(v / 50) * 50 : 1200;
+  });
+  const [difficulty, setDifficulty] = useState(() => {
+    if (saved?.difficultyId === 'custom') return customLevel(Number(localStorage.getItem(CUSTOM_ELO_KEY)) || 1200);
+    return DIFFICULTIES.find(d => d.id === saved?.difficultyId) || DIFFICULTIES[2];
+  });
   const [color, setColor] = useState(saved?.color === 'b' ? 'b' : 'w');
   const [game, setGame] = useState(() => {
     try { return saved?.fen ? new Chess(saved.fen) : new Chess(); } catch { return new Chess(); }
@@ -139,6 +169,51 @@ export default function Play() {
   const resultRecorded = useRef(false);
   const onlineRef = useRef(null); // { peer, conn, role, prevColor }
 
+  // ---- game clocks (play mode vs engine only) ----
+  const [clockMinutes, setClockMinutes] = useState(() =>
+    CLOCK_OPTIONS.includes(saved?.clockMinutes) ? saved.clockMinutes : 0);
+  const clocksRef = useRef(
+    saved?.clockMinutes && saved?.clocks && Number.isFinite(saved.clocks.w) && Number.isFinite(saved.clocks.b)
+      ? { w: saved.clocks.w, b: saved.clocks.b }
+      : { w: 0, b: 0 }
+  );
+  const [, setClockTick] = useState(0);
+  const [timeOver, setTimeOver] = useState(null); // 'w' | 'b' flagged side
+  const [manualResult, setManualResult] = useState(null); // {outcome, title, detail}
+  const [hintMove, setHintMove] = useState(null); // {from,to,san}
+  const hintBusyRef = useRef(false);
+  const hintTimerRef = useRef(null);
+
+  // ---- piece set + share/export panel ----
+  const [pieceSet, setPieceSet] = useState(() => {
+    try { return localStorage.getItem(PIECE_SET_KEY) === 'letters' ? 'letters' : 'classic'; } catch { return 'classic'; }
+  });
+  const [shareOpen, setShareOpen] = useState(false);
+  const [fenInput, setFenInput] = useState('');
+  const [shareCopied, setShareCopied] = useState(''); // 'pgn' | 'fen' | ''
+  const [showCoords, setShowCoords] = useState(() => localStorage.getItem(COORDS_KEY) !== 'false');
+  const [blindfold, setBlindfold] = useState(() => localStorage.getItem(BLINDFOLD_KEY) === 'true');
+  const [flashSquare, setFlashSquare] = useState(null); // briefly reveals the moved piece in blindfold mode
+
+  useEffect(() => {
+    try { localStorage.setItem(COORDS_KEY, String(showCoords)); } catch { /* ignore */ }
+  }, [showCoords]);
+  useEffect(() => {
+    try { localStorage.setItem(BLINDFOLD_KEY, String(blindfold)); } catch { /* ignore */ }
+  }, [blindfold]);
+  useEffect(() => {
+    try { localStorage.setItem(CUSTOM_ELO_KEY, String(customElo)); } catch { /* ignore */ }
+  }, [customElo]);
+
+  // blindfold: flash the piece that just moved for 300ms, then hide it again
+  useEffect(() => {
+    if (!blindfold) { setFlashSquare(null); return; }
+    if (!lastMove) { setFlashSquare(null); return; }
+    setFlashSquare(lastMove.to);
+    const t = setTimeout(() => setFlashSquare(null), 300);
+    return () => clearTimeout(t);
+  }, [lastMove, blindfold]);
+
   // live snapshot for connection handlers (they outlive any single render)
   const liveRef = useRef(null);
   liveRef.current = { game, history, captured, lastMove, mode, online };
@@ -169,6 +244,18 @@ export default function Play() {
   }, [history, viewIndex]);
 
   useEffect(() => {
+    return () => { if (hintTimerRef.current) clearTimeout(hintTimerRef.current); };
+  }, []);
+
+  // Esc dismisses the share panel
+  useEffect(() => {
+    if (!shareOpen) return;
+    function onKey(e) { if (e.key === 'Escape') setShareOpen(false); }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [shareOpen]);
+
+  useEffect(() => {
     const mql = window.matchMedia(MOBILE_QUERY);
     const onChange = () => setIsMobile(mql.matches);
     mql.addEventListener('change', onChange);
@@ -185,6 +272,7 @@ export default function Play() {
       fen: game.fen(), lastMove, color, difficultyId: difficulty.id, history, captured,
       mode: mode === 'online' ? 'play' : mode,
       online: mode === 'online', // never resume an online game as an engine game
+      clockMinutes, clocks: { ...clocksRef.current }, savedAt: Date.now(),
     }));
     if (mode === 'online' && online.code) {
       localStorage.setItem(ONLINE_SAVE_KEY, JSON.stringify({
@@ -192,7 +280,37 @@ export default function Play() {
         fen: game.fen(), history, captured, lastMove,
       }));
     }
-  }, [game, lastMove, color, difficulty, history, captured, mode, online]);
+  }, [game, lastMove, color, difficulty, history, captured, mode, online, clockMinutes]);
+
+  useEffect(() => {
+    try { localStorage.setItem(PIECE_SET_KEY, pieceSet); } catch { /* ignore */ }
+  }, [pieceSet]);
+
+  function resetClocks(minutes = clockMinutes) {
+    const ms = (minutes || 0) * 60 * 1000;
+    clocksRef.current = { w: ms, b: ms };
+    setTimeOver(null);
+    setClockTick((t) => t + 1);
+  }
+
+  function clearHint() {
+    setHintMove(null);
+    if (hintTimerRef.current) { clearTimeout(hintTimerRef.current); hintTimerRef.current = null; }
+  }
+
+  // tick the clocks: only the side to move runs; paused while game is over,
+  // while reviewing old moves, or outside play-vs-engine mode
+  const clocksActive = mode === 'play' && clockMinutes > 0 && !game.isGameOver() && !manualResult && !timeOver && viewIndex === null;
+  useEffect(() => {
+    if (!clocksActive) return;
+    const id = setInterval(() => {
+      const side = game.turn();
+      clocksRef.current[side] = Math.max(0, clocksRef.current[side] - 150);
+      if (clocksRef.current[side] <= 0) setTimeOver(side);
+      setClockTick((t) => t + 1);
+    }, 150);
+    return () => clearInterval(id);
+  }, [clocksActive, game]);
 
   // if the saved position had the engine to move (e.g. player refreshed
   // while Maestro was thinking), let it reply now
@@ -236,6 +354,10 @@ export default function Play() {
   function newGame(c = color, d = difficulty) {
     gameId.current += 1;
     resultRecorded.current = false;
+    resetCoachChat();
+    clearHint();
+    setManualResult(null);
+    resetClocks();
     const g = new Chess();
     g.difficultyLabel = difficultyLabel(d);
     g.humanColor = c;
@@ -254,6 +376,7 @@ export default function Play() {
     try {
       const mv = await bestMove(g.fen(), d);
       if (id !== gameId.current) return; // a new game started while searching
+      clearHint();
       setGame((prev) => {
         const next = new Chess(prev.fen());
         try {
@@ -284,6 +407,9 @@ export default function Play() {
   function startWatch() {
     gameId.current += 1;
     resultRecorded.current = false;
+    clearHint();
+    setManualResult(null);
+    setTimeOver(null);
     watchDiffs.current = { w: randomDifficulty(), b: randomDifficulty() };
     lastCommentedPly.current = 0;
     watchSummarized.current = false;
@@ -377,6 +503,8 @@ export default function Play() {
     setStatus('');
     setOnlineOver(null);
     setPendingOffer(null);
+    setManualResult(null);
+    setTimeOver(null);
     resultRecorded.current = false;
   }
 
@@ -514,7 +642,118 @@ export default function Play() {
   function singlePlayerTakeback() {
     if (mode !== 'play' || thinking || (history?.length || 1) < 2) return;
     const n = history.length >= 3 ? 2 : 1;
+    clearHint();
     rebuildFromHistory(history.slice(0, history.length - n));
+  }
+
+  // ---- play-vs-engine: hint, resign, draw offer ----
+  async function requestHint() {
+    if (mode !== 'play' || thinking || viewing || game.isGameOver() || manualResult || timeOver) return;
+    if (game.turn() !== color || hintMove || hintBusyRef.current) return;
+    hintBusyRef.current = true;
+    try {
+      const { bestmove } = await analyze(game.fen(), { depth: 8, movetime: 300 });
+      const id = gameId.current;
+      if (!bestmove || bestmove === '(none)' || id !== gameId.current) return;
+      const from = bestmove.slice(0, 2);
+      const to = bestmove.slice(2, 4);
+      let san = '';
+      try { san = new Chess(game.fen()).move({ from, to, promotion: bestmove[4] }).san; } catch { /* keep empty */ }
+      clearHint();
+      setHintMove({ from, to });
+      setStatus(`Hint: ${san || from + '–' + to}`);
+      hintTimerRef.current = setTimeout(clearHint, 2500);
+    } catch {
+      setStatus('Hint unavailable right now.');
+    } finally {
+      hintBusyRef.current = false;
+    }
+  }
+
+  function resignVsEngine() {
+    if (mode !== 'play' || game.isGameOver() || manualResult || timeOver) return;
+    clearHint();
+    setManualResult({ outcome: 'l', title: 'You resigned', detail: 'Run it back — ask the coach what plan to try next time.' });
+  }
+
+  async function offerDrawVsEngine() {
+    if (mode !== 'play' || thinking || game.isGameOver() || manualResult || timeOver) return;
+    setStatus('Draw offer sent…');
+    try {
+      const id = gameId.current;
+      // cp is from the side-to-move perspective; when you offer on your move,
+      // the engine's own evaluation of the position is the negation
+      const { cp, mate } = await analyze(game.fen(), { depth: 10, movetime: 400 });
+      if (id !== gameId.current) return;
+      const engineCp = game.turn() === color ? (cp === null ? null : -cp) : cp;
+      if (mate !== null && mate <= 0) { // engine is getting mated — accept
+        setManualResult({ outcome: 'd', title: 'Draw — Maestro accepts', detail: 'Maestro saw no way forward and took the draw.' });
+      } else if (engineCp !== null && engineCp <= -150) {
+        setManualResult({ outcome: 'd', title: 'Draw — Maestro accepts', detail: 'Maestro judged the position worse and took the draw.' });
+      } else {
+        setStatus('Maestro declines the draw offer.');
+      }
+    } catch {
+      setStatus('Could not reach the engine — try again.');
+    }
+  }
+
+  // ---- PGN/FEN export + FEN import ----
+  function buildPgn() {
+    try {
+      const hist = history?.length ? history : [{ fen: game.fen(), lastMove: null }];
+      const g = new Chess(hist[0].fen);
+      for (let k = 1; k < hist.length; k++) {
+        if (hist[k].lastMove?.san) g.move(hist[k].lastMove.san);
+      }
+      let result = '*';
+      if (manualResult) result = manualResult.outcome === 'w' ? '1-0' : manualResult.outcome === 'l' ? '0-1' : '1/2-1/2';
+      else if (timeOver) result = timeOver === 'w' ? '0-1' : '1-0';
+      else if (game.isCheckmate()) result = game.turn() === 'w' ? '0-1' : '1-0';
+      else if (game.isDraw()) result = '1/2-1/2';
+      const whiteName = mode === 'watch' ? 'White' : color === 'w' ? 'You' : 'Maestro';
+      const blackName = mode === 'watch' ? 'Black' : color === 'b' ? 'You' : 'Maestro';
+      g.header('Event', 'Maestro Chess', 'Date', new Date().toISOString().slice(0, 10).replace(/-/g, '.'), 'White', whiteName, 'Black', blackName, 'Result', result);
+      return g.pgn();
+    } catch { return ''; }
+  }
+
+  async function copyText(text, kind) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setShareCopied(kind);
+      setTimeout(() => setShareCopied(''), 1500);
+    } catch {
+      setStatus('Copy failed — select the text manually.');
+    }
+  }
+
+  function loadFen() {
+    const fen = fenInput.trim();
+    if (!fen) return;
+    let g;
+    try { g = new Chess(fen); } catch {
+      setStatus('Invalid FEN — please check the string.');
+      return;
+    }
+    gameId.current += 1;
+    resultRecorded.current = false;
+    resetCoachChat();
+    clearHint();
+    setManualResult(null);
+    resetClocks();
+    g.difficultyLabel = difficultyLabel(difficulty);
+    g.humanColor = color;
+    setMode('play');
+    setGame(g);
+    setLastMove(null);
+    setHistory([{ fen: g.fen(), lastMove: null }]);
+    setViewIndex(null);
+    setCaptured({ w: [], b: [] });
+    setStatus('');
+    setShareOpen(false);
+    setFenInput('');
+    if (g.turn() !== color) engineReply(g, difficulty);
   }
 
   // ---- online game actions ----
@@ -652,16 +891,40 @@ export default function Play() {
     setPendingOffer(null);
   }
 
+  /** Why the game is a draw, with specifics (repetition / 50-move / stalemate / material). */
+  function drawReason(g) {
+    if (g.isStalemate()) return 'Draw — stalemate.';
+    if (g.isInsufficientMaterial()) return 'Draw — insufficient material.';
+    if (Number(g.fen().split(' ')[4]) >= 100) return 'Draw — fifty-move rule.';
+    // threefold: our game objects are rebuilt from FEN each ply, so count
+    // occurrences of the current position among the saved history fens
+    const base = g.fen().split(' ').slice(0, 4).join(' ');
+    let count = 1;
+    for (const e of history || []) {
+      if (e.fen.split(' ').slice(0, 4).join(' ') === base) count += 1;
+    }
+    if (count >= 3) return 'Draw — threefold repetition.';
+    return 'Draw.';
+  }
+
   useEffect(() => {
+    if (manualResult) {
+      setStatus(manualResult.title + '.');
+      return;
+    }
+    if (timeOver) {
+      setStatus(timeOver === color ? 'Time — you lose.' : 'Time — you win.');
+      return;
+    }
     const over = game.isGameOver();
     if (!over) {
-      setStatus(game.isCheck() ? 'Check!' : '');
+      // check indication is shown by the banner under the board — keep the status line for turn info only
+      setStatus('');
       return;
     }
     let s = '';
     if (game.isCheckmate()) s = `Checkmate — ${game.turn() === 'w' ? 'Black' : 'White'} wins. ${game.turn() === color ? 'Ask the coach where it went wrong.' : 'Well played!'}`;
-    else if (game.isStalemate()) s = 'Stalemate — draw.';
-    else if (game.isDraw()) s = 'Draw.';
+    else if (game.isDraw()) s = drawReason(game);
     setStatus(s);
     // record the result once per finished game (a watched engine game is not a result)
     if (mode === 'watch') return;
@@ -686,6 +949,25 @@ export default function Play() {
       return next;
     });
   }, [game, color]); // eslint-disable-line
+
+  // endings that don't come from a terminal board position: flagging,
+  // resignation, or an accepted draw offer in a play-vs-engine game
+  useEffect(() => {
+    if (mode !== 'play') return;
+    let outcome = null;
+    if (timeOver) outcome = timeOver === color ? 'l' : 'w';
+    else if (manualResult) outcome = manualResult.outcome;
+    if (!outcome || resultRecorded.current) return;
+    resultRecorded.current = true;
+    setResults((r) => {
+      const next = JSON.parse(JSON.stringify(r));
+      const id = difficulty.id;
+      next.engine[id] = next.engine[id] || { w: 0, l: 0, d: 0 };
+      next.engine[id][outcome] += 1;
+      localStorage.setItem(RESULTS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }, [timeOver, manualResult, mode, color, difficulty]);
 
   // online games can end by resignation or an agreed draw without the
   // board position being terminal — tally those once, like the effect above
@@ -746,6 +1028,7 @@ export default function Play() {
     const victim = findVictim(game, from, to);
     if (victim) setCaptured((c) => ({ ...c, [victim.color]: [...c[victim.color], victim.type] }));
     playMoveSound({ capture: !!victim });
+    clearHint();
     setGame(g);
     setLastMove(lm);
     setHistory((h) => [...(h || [{ fen: game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm, victim: victim || null }]);
@@ -809,12 +1092,43 @@ export default function Play() {
               className="toolbar-select"
               aria-label="Difficulty"
               value={difficulty.id}
-              onChange={(e) => { const d = DIFFICULTIES.find(x => x.id === e.target.value); setDifficulty(d); newGame(color, d); }}
+              onChange={(e) => {
+                if (e.target.value === 'custom') {
+                  const d = customLevel(customElo);
+                  setDifficulty(d);
+                  newGame(color, d);
+                } else {
+                  const d = DIFFICULTIES.find(x => x.id === e.target.value);
+                  setDifficulty(d);
+                  newGame(color, d);
+                }
+              }}
             >
               {DIFFICULTIES.map((d) => (
                 <option key={d.id} value={d.id}>{d.label}{d.elo ? ` (~${d.elo})` : ''}</option>
               ))}
+              <option value="custom">Custom{difficulty.id === 'custom' ? ` (~${difficulty.elo})` : ''}</option>
             </select>
+            {difficulty.id === 'custom' && (
+              <label className="custom-elo">
+                <input
+                  type="range"
+                  min="400"
+                  max="2800"
+                  step="50"
+                  value={customElo}
+                  onChange={(e) => {
+                    const elo = Number(e.target.value);
+                    setCustomElo(elo);
+                    const d = customLevel(elo);
+                    setDifficulty(d);
+                    newGame(color, d);
+                  }}
+                  aria-label="Custom engine Elo"
+                />
+                <span className="custom-elo-value">{difficulty.elo} Elo</span>
+              </label>
+            )}
             <select
               className="toolbar-select"
               aria-label="Play as"
@@ -824,6 +1138,54 @@ export default function Play() {
               <option value="w">White</option>
               <option value="b">Black</option>
             </select>
+            {mode !== 'online' && (
+              <select
+                className="toolbar-select"
+                aria-label="Clock"
+                title="Game clock"
+                value={clockMinutes}
+                onChange={(e) => { const m = Number(e.target.value); setClockMinutes(m); resetClocks(m); }}
+              >
+                {CLOCK_OPTIONS.map((m) => (
+                  <option key={m} value={m}>{m === 0 ? 'Clock: off' : `Clock: ${m} min`}</option>
+                ))}
+              </select>
+            )}
+            <button
+              type="button"
+              className="icon-btn piece-set-toggle"
+              onClick={() => setPieceSet((s) => (s === 'classic' ? 'letters' : 'classic'))}
+              aria-label={`Piece set: ${pieceSet === 'classic' ? 'classic glyphs' : 'letters'}`}
+              title={`Pieces: ${pieceSet === 'classic' ? 'classic glyphs' : 'letters'}`}
+            >
+              {pieceSet === 'classic' ? '♞' : 'N'}
+            </button>
+            <button
+              type="button"
+              className={`icon-btn${showCoords ? ' active' : ''}`}
+              onClick={() => setShowCoords((v) => !v)}
+              aria-label={`Coordinates: ${showCoords ? 'shown' : 'hidden'}`}
+              title={`Coordinates: ${showCoords ? 'shown' : 'hidden'}`}
+              aria-pressed={showCoords}
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path fill="none" stroke="currentColor" strokeWidth="2" d="M4 4h16v16H4V4Zm0 12h16M16 4v16" />
+                <path fill="currentColor" d="M7 13.6h1.9l1-3 1 3H12l-1.8-5h-1L7.4 13.6Zm.6 2.4h1v2.4h2.2v.9H7.6V16Zm5-6.2h3v.9h-2v.8h1.8v.9h-1.8v1.5h-.9V9.8Z" />
+              </svg>
+            </button>
+            <button
+              type="button"
+              className={`icon-btn${blindfold ? ' active' : ''}`}
+              onClick={() => setBlindfold((v) => !v)}
+              aria-label={`Blindfold mode: ${blindfold ? 'on' : 'off'}`}
+              title={`Blindfold: ${blindfold ? 'on — pieces hidden' : 'off'}`}
+              aria-pressed={blindfold}
+            >
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M3 3l18 18M10.6 5.1A9.8 9.8 0 0 1 12 5c5 0 9 4.5 10 7-.4 1-1.3 2.4-2.7 3.7M6.6 6.6C4 8.3 2.5 10.8 2 12c1 2.5 5 7 10 7 1.5 0 3-.4 4.3-1.1" />
+                <path fill="none" stroke="currentColor" strokeWidth="2" d="M9.9 9.9a3 3 0 0 0 4.2 4.2" />
+              </svg>
+            </button>
             {isMobile ? (
               <div className="settings-trigger" ref={menuRef}>
                 <button
@@ -938,7 +1300,31 @@ export default function Play() {
             </div>
           )}
           <div className="captured-inline"><CapturedTray victims={byWhite} advantage={whiteAdv} pieceColor="black" /></div>
-          <Board fen={boardFen} orientation={color} onMove={onMove} lastMove={boardLastMove} viewOnly={viewing || mode === 'watch' || !!onlineOver || (mode === 'online' && game.turn() !== color)} />
+          {mode === 'play' && clockMinutes > 0 && (
+            <div className={`game-clock top${game.turn() !== color && !game.isGameOver() && !manualResult && !timeOver && viewIndex === null ? ' running' : ''}`} aria-live="off">
+              {formatClock(clocksRef.current[color === 'w' ? 'b' : 'w'])}
+            </div>
+          )}
+          <Board
+            fen={boardFen}
+            orientation={color}
+            onMove={onMove}
+            lastMove={boardLastMove}
+            hint={viewing ? null : hintMove}
+            pieceSet={pieceSet}
+            viewOnly={viewing || mode === 'watch' || !!onlineOver || !!manualResult || !!timeOver || (mode === 'online' && game.turn() !== color)}
+            showCoords={showCoords}
+            blindfold={blindfold}
+            flashSquare={flashSquare}
+          />
+          <div className="sr-only" aria-live="polite">
+            {boardLastMove ? `${boardLastMove.color === 'w' ? 'White' : 'Black'} played ${boardLastMove.san}` : ''}
+          </div>
+          {!viewing && !game.isGameOver() && !onlineOver && !manualResult && !timeOver && game.isCheck() && (
+            <div className="check-banner" role="alert">
+              ⚠ {game.turn() === color ? 'Check! Your king is under attack.' : `Check! ${game.turn() === 'w' ? 'White' : 'Black'}'s king is under attack.`}
+            </div>
+          )}
           {mode === 'online' && !onlineOver && (
             <div className="online-actions">
               <button type="button" className="mini" onClick={requestTakeback} disabled={(history?.length || 1) < 3 || !!pendingOffer}>Takeback</button>
@@ -981,7 +1367,27 @@ export default function Play() {
             {mode === 'play' && (
               <button type="button" className="mini takeback-btn" onClick={singlePlayerTakeback} disabled={thinking || (history?.length || 1) < 2}>Takeback</button>
             )}
+            {mode === 'play' && (
+              <button
+                type="button"
+                className="mini hint-btn"
+                onClick={requestHint}
+                disabled={thinking || viewing || !!hintMove || game.isGameOver() || !!manualResult || !!timeOver || game.turn() !== color}
+                title="Show the best move"
+              >Hint</button>
+            )}
+            {mode === 'play' && (history?.length || 1) > 1 && !game.isGameOver() && !manualResult && !timeOver && (
+              <>
+                <button type="button" className="mini" onClick={offerDrawVsEngine} disabled={thinking} title="Offer Maestro a draw">Offer draw</button>
+                <button type="button" className="mini resign" onClick={resignVsEngine}>Resign</button>
+              </>
+            )}
           </div>
+          )}
+          {mode === 'play' && clockMinutes > 0 && (
+            <div className={`game-clock bottom${game.turn() === color && !game.isGameOver() && !manualResult && !timeOver && viewIndex === null ? ' running' : ''}`} aria-live="off">
+              {formatClock(clocksRef.current[color])}
+            </div>
           )}
           <div className="status-line">
             {viewing
@@ -992,22 +1398,29 @@ export default function Play() {
                     : `${game.turn() === 'w' ? 'White' : 'Black'} to move`)
                 : thinking ? <span className="thinking">Maestro is thinking…</span> : status || `${game.turn() === color ? 'Your move' : 'Opponent to move'} (${game.turn() === 'w' ? 'white' : 'black'})`}
           </div>
-          {(game.isGameOver() || onlineOver) && !viewing && (
+          {(game.isGameOver() || onlineOver || timeOver || manualResult) && !viewing && (
             <div className="game-over panel">
               <p className="go-title">
                 {onlineOver === 'win-resign' ? 'You win — your opponent resigned'
                   : onlineOver === 'lose-resign' ? 'You resigned'
                   : onlineOver === 'draw-agreed' ? 'Draw agreed'
+                  : manualResult ? manualResult.title
+                  : timeOver ? (timeOver === color ? 'Time — you lose' : 'Time — you win')
                   : game.isCheckmate()
                     ? `Checkmate — ${game.turn() === 'w' ? 'Black' : 'White'} wins`
-                    : game.isStalemate() ? 'Stalemate — draw' : 'Draw'}
+                    : game.isDraw() ? drawReason(game).replace(/\.$/, '') : 'Game over'}
               </p>
               <p className="go-detail">
                 {onlineOver
                   ? 'Run it back or review the game together.'
-                  : game.isCheckmate()
-                    ? (game.turn() === color ? 'Ask the coach where it went wrong.' : 'Well played!')
-                    : 'Nobody made a wrong move — ask the coach for ideas to sharpen it next time.'}
+                  : manualResult ? manualResult.detail
+                  : timeOver
+                    ? (timeOver === color ? 'Your clock ran out. Try a faster time control or a lower difficulty.' : 'Maestro ran out of time — well played!')
+                    : game.isCheckmate()
+                      ? (game.turn() === color ? 'Ask the coach where it went wrong.' : 'Well played!')
+                      : game.isDraw()
+                        ? drawReason(game) + ' Ask the coach for ideas to sharpen it next time.'
+                        : 'Ask the coach for ideas to sharpen it next time.'}
               </p>
               <div className="go-actions">
                 <button type="button" className="primary" onClick={() => { if (mode === 'watch') startWatch(); else if (mode === 'online') requestNewGame(); else newGame(); }}>{mode === 'watch' ? 'Watch another' : mode === 'online' ? 'Rematch' : 'New game'}</button>
@@ -1059,6 +1472,7 @@ export default function Play() {
           <h3 className="game-side-title">Moves</h3>
           <span className="game-side-caret" aria-hidden="true">{movesOpen ? '›' : '‹'}</span>
         </button>
+        <button type="button" className="mini share-btn" onClick={() => setShareOpen(true)} title="Share or import a game">Share / FEN</button>
         {opening && <p className="opening-side">{opening}</p>}
         {movesOpen && boardLastMove && (
           <div className="last-move-line" aria-live="polite">
@@ -1101,6 +1515,32 @@ export default function Play() {
             })()}
         </div>
       </aside>
+      {shareOpen && (
+        <div className="share-overlay" role="dialog" aria-label="Share and import" onClick={() => setShareOpen(false)}>
+          <div className="share-panel panel" onClick={(e) => e.stopPropagation()}>
+            <div className="share-head">
+              <h3>Share &amp; import</h3>
+              <button type="button" className="icon-btn" onClick={() => setShareOpen(false)} aria-label="Close">✕</button>
+            </div>
+            <label className="share-label">PGN</label>
+            <textarea readOnly value={buildPgn()} rows={6} onFocus={(e) => e.target.select()} aria-label="Game PGN" />
+            <button type="button" className="mini" onClick={() => copyText(buildPgn(), 'pgn')}>{shareCopied === 'pgn' ? 'Copied!' : 'Copy PGN'}</button>
+            <label className="share-label">FEN</label>
+            <textarea readOnly value={game.fen()} rows={2} onFocus={(e) => e.target.select()} aria-label="Current FEN" />
+            <button type="button" className="mini" onClick={() => copyText(game.fen(), 'fen')}>{shareCopied === 'fen' ? 'Copied!' : 'Copy FEN'}</button>
+            <label className="share-label">Load a position (FEN)</label>
+            <textarea
+              value={fenInput}
+              onChange={(e) => setFenInput(e.target.value)}
+              rows={2}
+              placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+              aria-label="FEN to load"
+            />
+            <button type="button" className="primary" onClick={loadFen} disabled={!fenInput.trim()}>Load FEN</button>
+            <p className="side-note">Loading a FEN starts a new game from that position.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

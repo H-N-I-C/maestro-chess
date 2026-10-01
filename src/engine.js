@@ -11,8 +11,12 @@ function init() {
   if (readyPromise) return readyPromise;
   readyPromise = new Promise((resolve, reject) => {
     let w;
+    // the pthreads build is ~3-4x faster, but needs SharedArrayBuffer
+    // (server must send COOP/COEP isolation headers); fall back otherwise
+    const threaded = typeof SharedArrayBuffer !== 'undefined' && globalThis.crossOriginIsolated;
+    const build = threaded ? 'stockfish-nnue-16.js' : 'stockfish-nnue-16-single.js';
     try {
-      w = new Worker('/vendor/stockfish-nnue-16-single.js');
+      w = new Worker(`/vendor/${build}`);
     } catch (err) {
       readyPromise = null;
       reject(err);
@@ -48,6 +52,7 @@ function init() {
     };
     w.onerror = fail;
     send('uci');
+    if (threaded) send(`setoption name Threads value ${Math.min(8, navigator.hardwareConcurrency || 4)}`);
     send('isready');
   });
   return readyPromise;
@@ -173,3 +178,32 @@ export const DIFFICULTIES = [
 ];
 
 export async function engineReady() { return init(); }
+
+/**
+ * Build a difficulty level for an arbitrary Elo (400-2800) by linearly
+ * interpolating between the preset DIFFICULTIES entries. Strength knobs
+ * (skill/depth/movetime) follow the preset curve; the UCI_Elo option makes
+ * the engine play to the requested rating.
+ */
+export function customLevel(elo) {
+  const clamped = Math.min(2800, Math.max(400, Math.round(elo / 50) * 50));
+  const pts = DIFFICULTIES.filter((d) => d.elo > 0).map((d) => ({
+    elo: d.elo, skill: d.skill, depth: d.depth, movetime: d.movetime,
+  }));
+  let lo = pts[0], hi = pts[pts.length - 1];
+  for (let i = 0; i < pts.length - 1; i++) {
+    if (clamped >= pts[i].elo && clamped <= pts[i + 1].elo) { lo = pts[i]; hi = pts[i + 1]; break; }
+  }
+  const t = hi.elo === lo.elo ? 0 : (clamped - lo.elo) / (hi.elo - lo.elo);
+  const lerp = (a, b) => a + (b - a) * t;
+  return {
+    id: 'custom',
+    label: 'Custom',
+    sub: `Tuned to ${clamped} Elo`,
+    skill: Math.min(20, Math.round(lerp(lo.skill, hi.skill))),
+    elo: clamped,
+    limit: true,
+    depth: Math.min(14, Math.max(6, Math.round(lerp(lo.depth, hi.depth)))),
+    movetime: Math.min(800, Math.max(200, Math.round(lerp(lo.movetime, hi.movetime) / 50) * 50)),
+  };
+}

@@ -148,7 +148,7 @@ button.primary, .coach-input button, .side-actions .primary {
 .game-side.collapsed .game-side-title { writing-mode: vertical-rl; letter-spacing: .15em; }
 .game-side-caret { margin-left: auto; color: var(--muted); font-size: 16px; line-height: 1; }
 .game-side.collapsed .game-side-caret { display: none; }
-.game-side.collapsed .results-line, .game-side.collapsed .opening-side { display: none; }
+.game-side.collapsed .results-line, .game-side.collapsed .opening-side, .game-side.collapsed .share-btn { display: none; }
 .game-side-head:hover .game-side-title, .game-side-head:hover .game-side-caret { color: var(--ink); }
 .move-list {
   list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1;
@@ -351,7 +351,10 @@ button.primary, .coach-input button, .side-actions .primary {
 .side-note { font-size: 13px; color: var(--muted); line-height: 1.5; margin: 0; }
 .key-row { display: flex; gap: 6px; }
 .key-row input { flex: 1; }
+.model-picker { width: 100%; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); color: inherit; padding: 6px 8px; font-size: 13px; }
 button.mini { border: 1px solid var(--line); background: none; border-radius: 8px; padding: 4px 10px; font-size: 12px; color: var(--muted); white-space: nowrap; }
+button.linklike { border: none; background: none; padding: 0; font-size: inherit; color: var(--accent, #7a5c2e); text-decoration: underline; cursor: pointer; }
+.side-note code { font-size: 12px; }
 .side-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .side-actions button { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 8px 12px; font-size: 13px; }
 .coach-status { display: flex; align-items: center; gap: 8px; font-size: 13.5px; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line); }
@@ -538,10 +541,31 @@ button.mini { border: 1px solid var(--line); background: none; border-radius: 8p
 .badge.live { background: var(--accent); color: var(--accent-ink); }
 .badge.offline { border: 1px solid var(--line); color: var(--muted); }
 .coach-log { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-.msg { padding: 9px 12px; border-radius: 10px; font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; }
+.msg { padding: 9px 12px; border-radius: 10px; font-size: 14.5px; line-height: 1.5; white-space: pre-wrap; flex: none; }
 .msg.coach { background: var(--bg2); border: 1px solid var(--line); }
 .msg.user { background: var(--accent); color: var(--accent-ink); align-self: flex-end; max-width: 90%; }
-.msg.thinking { font-style: italic; color: var(--muted); }
+.msg.thinking { font-style: italic; color: var(--muted); display: flex; align-items: center; gap: 8px; align-self: flex-start; }
+.thinking-label { font-size: 13px; }
+.typing-dots { display: inline-flex; gap: 4px; }
+.typing-dots span {
+  width: 6px; height: 6px; border-radius: 50%; background: var(--muted);
+  animation: coach-dot 1.2s ease-in-out infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: .15s; }
+.typing-dots span:nth-child(3) { animation-delay: .3s; }
+@keyframes coach-dot {
+  0%, 60%, 100% { transform: translateY(0); opacity: .35; }
+  30% { transform: translateY(-4px); opacity: 1; }
+}
+.check-banner {
+  margin: 8px auto 0; padding: 8px 16px; border-radius: 8px; flex: none;
+  background: #a33; color: #fff; font-size: 14px; font-weight: 600;
+  animation: check-pop .25s ease;
+}
+@keyframes check-pop {
+  from { transform: scale(.9); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
 .coach-quick { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 12px 8px; }
 .coach-quick button {
   font-size: 12px; padding: 5px 10px; border-radius: 999px;
@@ -599,3 +623,129 @@ button.link { background: none; border: none; color: var(--accent); padding: 0; 
   .board-wrap { width: min(100%, 92vw - 24px); }
   .theme-picker span { display: none; }
 }
+
+/* ---- coach / lessons additions (COACH-LESSONS-SERVER workstream) ---- */
+
+.coach-clear-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+  padding: 4px 6px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.coach-clear-btn:hover:not(:disabled) { color: var(--ink); border-color: var(--muted); }
+.coach-clear-btn:disabled { opacity: 0.4; cursor: default; }
+.coach-head .coach-clear-btn + .coach-collapse-btn { margin-left: 6px; }
+
+.stream-dropped { color: var(--muted); font-style: italic; }
+
+.try-board-bar {
+  display: flex;
+  justify-content: center;
+  margin-top: 8px;
+}
+.try-board-bar button {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg2);
+  color: var(--ink);
+  cursor: pointer;
+}
+.try-board-bar button:hover { border-color: var(--muted); }
+
+/* ============ GAMEPLAY-UI additions ============ */
+.game-clock {
+  align-self: flex-end;
+  padding: 4px 12px; border-radius: 8px;
+  background: var(--panel); border: 1px solid var(--line);
+  font-variant-numeric: tabular-nums; font-size: 15px; font-weight: 600;
+  color: var(--muted);
+}
+.game-clock.running { color: var(--ink); border-color: var(--accent); }
+.game-clock.bottom { align-self: flex-end; }
+
+.hint-arrow line { stroke: var(--accent); }
+.hint-arrow polygon { fill: var(--accent); }
+
+.move-nav .mini.resign { color: #a4442f; }
+
+.share-btn { align-self: flex-start; margin: 2px 0 4px; }
+
+.share-overlay {
+  position: fixed; inset: 0; z-index: 90;
+  background: rgba(0, 0, 0, .35);
+  display: flex; align-items: center; justify-content: center;
+}
+.share-panel {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px); overflow: auto;
+  padding: 16px 18px; display: flex; flex-direction: column; gap: 8px;
+}
+.share-head { display: flex; align-items: center; justify-content: space-between; }
+.share-head h3 { margin: 0; font-size: 16px; }
+.share-panel textarea {
+  width: 100%; box-sizing: border-box; resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px;
+  background: var(--bg2); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px;
+}
+.share-label { font-size: 12.5px; font-weight: 600; color: var(--muted); }
+.share-panel .mini { align-self: flex-start; }
+
+.piece.letter-piece {
+  width: 78%; height: 78%;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 50%;
+  font-weight: 700; font-size: .68em; font-family: Georgia, 'Times New Roman', serif;
+}
+.piece.letter-piece.white { background: #f4f1ea; color: #2b2b2b; border: 2px solid #2b2b2b; text-shadow: none; }
+.piece.letter-piece.black { background: #2b2b2b; color: #f4f1ea; border: 2px solid #101010; text-shadow: none; }
+
+.error-fallback {
+  max-width: 420px; margin: 15vh auto 0; padding: 24px;
+  display: flex; flex-direction: column; gap: 10px; align-items: flex-start;
+}
+.error-fallback h2 { margin: 0; font-size: 20px; }
+.error-fallback p { margin: 0; color: var(--muted); font-size: 14px; }
+
+@media (prefers-reduced-motion: reduce) {
+  .piece-pos { transition: none; }
+  .pieces .piece { transition: none; }
+  .pieces .piece.moved { animation: none; }
+  .pieces .piece.spawned { animation: none; }
+  .piece-pos.captured .piece { transition: none; }
+  .check-banner { animation: none; }
+  .typing-dots span { animation: none; }
+}
+
+/* ---- play-controls additions ---- */
+.sq.kb-focus { outline: 3px solid var(--accent); outline-offset: -3px; z-index: 2; }
+.board:focus { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 4px; }
+
+.sr-only {
+  position: absolute; width: 1px; height: 1px;
+  margin: -1px; padding: 0; border: 0; overflow: hidden;
+  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
+}
+
+.custom-elo { display: inline-flex; align-items: center; gap: 6px; }
+.custom-elo input[type="range"] { width: 110px; accent-color: var(--accent); }
+.custom-elo-value { font-size: 12.5px; font-weight: 600; color: var(--muted); white-space: nowrap; }
+
+.copied-tip {
+  position: absolute; margin-left: 6px; padding: 2px 6px;
+  font-size: 11px; color: var(--accent-ink); background: var(--accent);
+  border-radius: 4px; white-space: nowrap;
+}
+
+/* the header's auto-left margin belongs to the first header button only —
+   with both export and clear using coach-clear-btn, split them correctly */
+.coach-head .coach-clear-btn { position: relative; margin-left: 0; }
+.coach-head .coach-clear-btn:first-of-type { margin-left: auto; }
+.coach-head .coach-clear-btn + .coach-clear-btn { margin-left: 6px; }

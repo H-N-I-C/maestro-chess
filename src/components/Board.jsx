@@ -5,6 +5,21 @@ export const GLYPHS = {
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
 };
 
+export const PIECE_LETTERS = { k: 'K', q: 'Q', r: 'R', b: 'B', n: 'N', p: 'P' };
+export const PIECE_NAMES = { k: 'king', q: 'queen', r: 'rook', b: 'bishop', n: 'knight', p: 'pawn' };
+
+/** Render a piece as a unicode glyph (classic) or a styled letter (letters). */
+export function PieceGlyph({ type, color, pieceSet = 'classic', className = '' }) {
+  if (pieceSet === 'letters') {
+    return (
+      <span className={`piece letter-piece ${color === 'w' ? 'white' : 'black'} ${className}`}>
+        {PIECE_LETTERS[type]}
+      </span>
+    );
+  }
+  return <span className={`piece ${color === 'w' ? 'white' : 'black'} ${className}`}>{GLYPHS[type]}</span>;
+}
+
 const FILES = 'abcdefgh';
 const RANKS = '87654321';
 
@@ -66,7 +81,7 @@ function sqXY(sq, flip) {
   return flip ? { col: 7 - col, row: 7 - row } : { col, row };
 }
 
-function MoveArrow({ from, to, flip }) {
+function MoveArrow({ from, to, flip, className = '' }) {
   if (!from || !to || from === to) return null;
   const a = sqXY(from, flip);
   const b = sqXY(to, flip);
@@ -85,7 +100,7 @@ function MoveArrow({ from, to, flip }) {
   const hx = x2 + dx * 0.22;
   const hy = y2 + dy * 0.22;
   return (
-    <svg className="move-arrow" viewBox="0 0 8 8" aria-hidden="true">
+    <svg className={`move-arrow ${className}`} viewBox="0 0 8 8" aria-hidden="true">
       <line x1={x1} y1={y1} x2={x2} y2={y2} />
       <polygon points={`${hx},${hy} ${x2 + px * 0.13},${y2 + py * 0.13} ${x2 - px * 0.13},${y2 - py * 0.13}`} />
     </svg>
@@ -97,10 +112,11 @@ function MoveArrow({ from, to, flip }) {
  * props: fen, orientation ('w'|'b'), onMove({from,to,promotion}), highlights {square: class},
  *        lastMove {from,to}, viewOnly, small
  */
-export default function Board({ fen, orientation = 'w', onMove, highlights = {}, lastMove, viewOnly = false }) {
+export default function Board({ fen, orientation = 'w', onMove, highlights = {}, lastMove, hint = null, pieceSet = 'classic', viewOnly = false, showCoords = true, blindfold = false, flashSquare = null }) {
   const [selected, setSelected] = useState(null);
   const [promo, setPromo] = useState(null); // {from,to} awaiting promotion choice
   const [drag, setDrag] = useState(null); // {from,x,y} while dragging
+  const [kbFocus, setKbFocus] = useState(null); // keyboard focus square
   const pendingRef = useRef(null); // {sq,x,y} pointer-down candidate
   const suppressClickRef = useRef(false);
   const game = useMemo(() => new Chess(fen), [fen]);
@@ -130,6 +146,45 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
 
   // drop any pending promotion when the position changes (move was made elsewhere)
   useEffect(() => { setPromo(null); }, [fen]);
+
+  // ---- keyboard play: arrows move the focus square, Enter/Space picks up
+  // and drops (routes through the same click logic as the mouse, so the
+  // promotion chooser and legality checks behave identically) ----
+  function stepKbFocus(dFile, dRank) {
+    setKbFocus((cur) => {
+      const base = cur || (orientation === 'b' ? 'd5' : 'e4');
+      const f = FILES.indexOf(base[0]) + dFile;
+      const r = parseInt(base[1]) + dRank;
+      if (f < 0 || f > 7 || r < 1 || r > 8) return cur;
+      return FILES[f] + r;
+    });
+  }
+
+  function onBoardKeyDown(e) {
+    if (viewOnly) return;
+    const arrows = { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] };
+    if (arrows[e.key]) {
+      e.preventDefault();
+      e.stopPropagation(); // don't let Play's history-navigation listener see it
+      stepKbFocus(...arrows[e.key]);
+      return;
+    }
+    if (e.key === 'Escape') {
+      if (selected || promo) {
+        e.preventDefault();
+        e.stopPropagation();
+        setSelected(null);
+        setPromo(null);
+      }
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      if (!kbFocus) return;
+      e.preventDefault();
+      e.stopPropagation();
+      click(kbFocus);
+    }
+  }
 
   const legalTargets = useMemo(() => {
     if (!selected || viewOnly) return {};
@@ -211,15 +266,31 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
 
   return (
     <div className="board-wrap">
-      <div className="board" role="grid" aria-label="Chess board">
+      <div
+        className="board"
+        role="grid"
+        aria-label="Chess board. Use arrow keys to move the focus square, Enter to select and move."
+        tabIndex={0}
+        onKeyDown={onBoardKeyDown}
+      >
         {ordered.map((sq) => {
           const isLight = (FILES.indexOf(sq[0]) + parseInt(sq[1])) % 2 === 1;
           const cls = ['sq'];
           cls.push(isLight ? 'light' : 'dark');
           if (lastMove && (sq === lastMove.from || sq === lastMove.to)) cls.push('lastmove');
           if (selected === sq) cls.push('selected');
+          if (kbFocus === sq) cls.push('kb-focus');
           if (legalTargets[sq]) cls.push('target-' + legalTargets[sq]);
           if (highlights[sq]) cls.push(highlights[sq]);
+          const occupant = game.get(sq);
+          let label = sq;
+          if (occupant) label += `, ${occupant.color === 'w' ? 'white' : 'black'} ${PIECE_NAMES[occupant.type]}`;
+          else label += ', empty';
+          if (legalTargets[sq]) {
+            label += occupant && occupant.color !== game.turn()
+              ? `, can capture ${occupant.color === 'w' ? 'white' : 'black'} ${PIECE_NAMES[occupant.type]}`
+              : ', legal move';
+          }
           return (
             <button
               key={sq}
@@ -229,14 +300,15 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
               onPointerDown={(e) => onSqPointerDown(e, sq)}
               onPointerMove={(e) => onSqPointerMove(e, sq)}
               onPointerUp={(e) => onSqPointerUp(e, sq)}
-              aria-label={sq}
+              aria-label={label}
             >
-              {(sq[0] === (flip ? 'h' : 'a')) && <span className="coord rank">{sq[1]}</span>}
-              {(sq[1] === (flip ? '8' : '1')) && <span className="coord file">{sq[0]}</span>}
+              {showCoords && (sq[0] === (flip ? 'h' : 'a')) && <span className="coord rank">{sq[1]}</span>}
+              {showCoords && (sq[1] === (flip ? '8' : '1')) && <span className="coord file">{sq[0]}</span>}
             </button>
           );
         })}
         {!viewOnly && <MoveArrow from={lastMove?.from} to={lastMove?.to} flip={flip} />}
+        {hint && <MoveArrow from={hint.from} to={hint.to} flip={flip} className="hint-arrow" />}
         {promo && (() => {
           const pr = sqXY(promo.to, flip);
           const mover = game.turn();
@@ -254,7 +326,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
                   onClick={(e) => { e.stopPropagation(); choosePromo(t); }}
                   aria-label={`Promote to ${t}`}
                 >
-                  {GLYPHS[t]}
+                  <PieceGlyph type={t} color={mover} pieceSet={blindfold ? 'letters' : pieceSet} />
                 </button>
               ))}
               <button type="button" className="promo-cancel" onClick={() => setPromo(null)} aria-label="Cancel promotion">✕</button>
@@ -268,29 +340,33 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
               'piece-pos',
               p.status === 'captured' ? 'captured' : '',
             ].filter(Boolean).join(' ');
-            const inner = [
-              'piece',
-              p.color === 'w' ? 'white' : 'black',
-              p.status === 'new' ? 'spawned' : '',
-              p.status === 'moved' ? 'moved' : '',
-              selected === p.square ? 'lifted' : '',
-            ].filter(Boolean).join(' ');
             return (
               <span
                 key={p.key}
                 className={cls}
                 style={{ transform: `translate(${col * 100}%, ${row * 100}%)` }}
               >
-                <span className={inner}>{GLYPHS[p.type]}</span>
+                {!(blindfold && p.square !== flashSquare) && (
+                <PieceGlyph
+                  type={p.type}
+                  color={p.color}
+                  pieceSet={pieceSet}
+                  className={[
+                    p.status === 'new' ? 'spawned' : '',
+                    p.status === 'moved' ? 'moved' : '',
+                    selected === p.square ? 'lifted' : '',
+                  ].filter(Boolean).join(' ')}
+                />
+                )}
               </span>
             );
           })}
         </div>
         {drag && (() => {
           const p = game.get(drag.from);
-          return p ? (
+          return p && !(blindfold && drag.from !== flashSquare) ? (
             <span className="drag-ghost" style={{ left: drag.x, top: drag.y }} aria-hidden="true">
-              <span className={`piece ${p.color === 'w' ? 'white' : 'black'}`}>{GLYPHS[p.type]}</span>
+              <PieceGlyph type={p.type} color={p.color} pieceSet={pieceSet} />
             </span>
           ) : null;
         })()}

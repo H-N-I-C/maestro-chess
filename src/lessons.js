@@ -38,8 +38,8 @@ export const LESSONS = [
     intro: `A fork attacks two (or more) targets at once. The knight is the supreme forking piece because its jumps can't be blocked.\n\nThe most feared pattern is the family fork: knight checks the king and attacks the queen at the same time. The king must move, and the queen is lost.\n\nHunt for it: knights love outposts near the enemy camp — squares like e6, f6, d5 where they attack both the king and valuable pieces.`,
     demoFen: '6k1/8/8/7q/6N1/8/8/6K1 w - - 0 1', demoNote: 'Nf6+ (from g4) checks the king on g8 AND attacks the queen on h5. One move, two victims.',
     puzzles: [
-      { fen: '6k1/8/8/7q/6N1/8/8/6K1 w - - 0 1', prompt: 'White to play — win material with a fork.', accept: ['Nf6+'], hint: 'The knight on g4 jumps to f6: check to g8, and the queen on h5 is attacked.'},
-      { fen: '6k1/8/8/3r4/6N1/8/8/6K1 w - - 0 1', prompt: 'White to play — win the rook.', accept: ['Nf6+'], hint: 'The knight on g4 checks the king from f6 — and f6 also sees the rook on d5.' }
+      { fen: '6k1/8/8/7q/6N1/8/8/6K1 w - - 0 1', prompt: 'White to play — win material with a fork (play the whole sequence).', solution: ['Nf6+', 'Kh8', 'Nxh5'], accept: ['Nf6+'], hint: 'The knight on g4 jumps to f6: check to g8, and the queen on h5 is attacked.'},
+      { fen: '6k1/8/8/3r4/6N1/8/8/6K1 w - - 0 1', prompt: 'White to play — win the rook (play the whole sequence).', solution: ['Nf6+', 'Kh8', 'Nxd5'], accept: ['Nf6+'], hint: 'The knight on g4 checks the king from f6 — and f6 also sees the rook on d5.' }
     ],
     coachFocus: 'Spot knight forks: checks on e6/f6/d5/c7 that simultaneously hit loose pieces.',
   },
@@ -146,7 +146,11 @@ export const LESSONS = [
     intro: `Bxh7+! — the bishop sacrifice that defines attacking chess. Preconditions:\n\n1. The h7 pawn is defended ONLY by the king.\n2. Your knight can reach g5 (attacking h7).\n3. Your queen can reach the h-file or d1-h5 diagonal.\n4. The enemy king has no escape (no …g6 with a solid dark-square bishop, no knight on f6 to block).\n\nAfter Bxh7+ Kxh7, Ng5+ and Qh5+ (or Qd3+) drag the king out. Sometimes it mates; sometimes you win three pawns and the initiative. Calculate — don't guess.`,
     demoFen: 'r1bq1rk1/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQ1RK1 w - - 6 5',
     demoNote: 'NOT the moment yet — Black\'s knight covers f6/h7 area and g7 bishop defends h6. Spotting WHEN it doesn\'t work is half the skill.',
-    puzzles: [],
+    puzzles: [
+      { fen: 'r1bq1rk1/pppp1ppp/2n5/8/7P/3B1N2/PPPP1PP1/RNBQ1RK1 w - - 0 1', prompt: 'White to play — every precondition is met: h7 is defended only by the king, there is no f6 knight, and the queen reaches h5 once the knight leaves f3. Launch the Greek Gift and play the whole sequence.', solution: ['Bxh7+', 'Kxh7', 'Ng5+', 'Kg8', 'Qh5', 'Qxg5', 'hxg5'], accept: ['Bxh7+'], hint: 'Bxh7+! Kxh7 Ng5+ drags the king out. After Kg8, Qh5 hits the loose knight on g5 — hxg5 wins the queen.' },
+      { fen: 'r1bq1rk1/pppp1ppp/2n5/8/8/3B1N2/PPPP1PPP/RNBQ1RK1 b - - 0 1', prompt: 'Black to move — White has Bd3 and Nf3 lined up for the classic sacrifice. Stop it before it starts.', accept: ['h6'], hint: 'The Greek Gift needs a clear h7 and an Ng5 jump. ...h6 drives the knight off g5 and gives your king luft.' },
+      { fen: 'r1bq1rk1/pppp1ppp/2n2n2/8/4P3/3B1N2/PPPP1PPP/RNBQ1RK1 w - - 0 1', prompt: 'White to play — the knight on f6 is the only thing defending h7. Drive it away and the sacrifice becomes unstoppable.', accept: ['e5'], hint: 'Kick the defender with e5! Once the knight leaves f6, Bxh7+ is winning by force.' },
+    ],
     coachFocus: 'Greek Gift preconditions: h7 only defended by king, Ng5 available, queen ready, no defensive pieces.',
   },
   {
@@ -155,7 +159,7 @@ export const LESSONS = [
     demoFen: '6k1/6pp/4R3/8/8/8/8/3Q2K1 w - - 0 1',
     demoNote: 'Qd8+! — the only legal reply is Kf7: h7 is blocked by Black\'s own pawn, f8 and g8 are covered by the queen, and e7 is covered by the rook on e6. Then Qe8# — the queen steps over, guarded by the rook on the e-file, and the rook covers every flight square on the 6th rank. One check, one reply, one final blow.',
     puzzles: [
-      { fen: '6k1/6pp/4R3/8/8/8/8/3Q2K1 w - - 0 1', prompt: 'White to play — start mate in two (the forcing first move).', accept: ['Qd8+'], hint: 'Back-rank check. Where can the king run — and what follows?' }
+      { fen: '6k1/6pp/4R3/8/8/8/8/3Q2K1 w - - 0 1', prompt: 'White to play — start mate in two (the forcing first move, then the mate).', solution: ['Qd8+', 'Kf7', 'Qe8#'], accept: ['Qd8+'], hint: 'Back-rank check. Where can the king run — and what follows?' }
     ],
     coachFocus: 'Mate in two method: enumerate checks, enumerate replies, calculate the single branch.',
   },
@@ -176,6 +180,7 @@ export const LESSONS = [
     intro: `A weak square is one your opponent can't defend with a pawn. An outpost is a weak square where YOUR piece (usually a knight) can sit, protected, forever.\n\nKnights on outposts are monsters: a knight on d6/d3 attacks the whole position. Rooks and queens love open files; bishops love diagonals with fixed targets.\n\nTo create outposts: advance pawns past the square, exchange the defenders, and park a piece there. To fight them: trade the piece on the outpost, or fix a pawn to control it.`,
     demoFen: 'r2q1rk1/ppp1bppp/3p1n2/8/4P3/5N2/PPP2PPP/R1BQ1RK1 w - - 0 10',
     demoNote: 'd5 is a dream outpost: no black pawn can ever attack it. Nd2-c4/e4-d5 is the plan.',
+    tryFen: 'r2q1rk1/ppp1bppp/3p1n2/8/4P3/5N2/PPP2PPP/R1BQ1RK1 w - - 0 10',
     puzzles: [
       { fen: 'r2q1rk1/ppp1bppp/3p1n2/8/4P3/5N2/PPP2PPP/R1BQ1RK1 w - - 0 10', prompt: 'White to play — head for the outpost.', accept: ['Nd2'], hint: 'Route: f3–d2–c4/e4–d5. Start the journey.' },
     ],
@@ -196,7 +201,11 @@ export const LESSONS = [
     intro: `A single weakness can often be defended indefinitely. The winning method: create a SECOND weakness on the other wing, stretching the defense until it cracks.\n\nThe practical loop:\n1. Improve all your pieces.\n2. Probe for weaknesses.\n3. When the defense overcommits to one wing — SWITCH (the "Alekhine's gun" or simple wing transfer).\n\nAsk yourself each move: "What is my opponent's worst-placed piece, and what weakness can I make them defend?"`,
     demoFen: 'r2q1rk1/ppp1bppp/3p1n2/8/3NP3/2N2P2/PPP3PP/R1BQ1RK1 b - - 0 9',
     demoNote: 'Black holds d6 and b7 for now. The long game: pressure on the queenside, then e4/e5 central break as the second front.',
-    puzzles: [],
+    puzzles: [
+      { fen: 'r2q1rk1/ppp1bppp/3p1n2/8/3NP3/2N2P2/PPP3PP/R1BQ1RK1 b - - 0 9', prompt: 'Black to move — White is piling up on the queenside. Open a second front before the defense overcommits.', accept: ['d5'], hint: '...d5! strikes in the center: it opens lines and uses White\'s queenside concentration against itself.' },
+      { fen: 'rnbqkb1r/pppn1ppp/4p3/3pP3/3P1P2/2N5/PPP2PPP/R1BQKBNR b KQkq - 0 1', prompt: 'Black to move — the French structure needs counterplay. Play the thematic break.', accept: ['c5'], hint: 'The ...c5 break attacks White\'s overextended pawn chain at its base — the characteristic second front in French structures.' },
+      { fen: 'r2q1rk1/1pp1bppp/p1np1n2/8/3NP3/2N1BP2/PPP3PP/R2Q1RK1 w - - 0 1', prompt: 'White to move — a Carlsbad-type structure. What is the standard queenside plan, and what is its first move?', accept: ['b4'], hint: 'Minority attack: b4-b5 forces ...cxb5 or ...b6, creating a pawn weakness on c6/c7 that you attack forever.' },
+    ],
     coachFocus: 'Planning: improve pieces, probe weaknesses, create a second front when defense overcommits.',
   },
 
@@ -227,6 +236,7 @@ export const LESSONS = [
     intro: `When two kings face each other with one square between, the side NOT to move "has the opposition" — the enemy king must step aside.\n\nIn pawn endgames, the opposition often decides everything: the winning king escorts its pawn forward, zugzwang forcing the enemy king to retreat.\n\nKey skills: the square rule (can the enemy king catch my pawn?), key squares (can my king reach e8/d8/c8 in front of my pawn?), and NEVER advance the pawn past your king — the king leads.`,
     demoFen: '8/8/3k4/8/8/3K4/4P3/8 w - - 0 1',
     demoNote: 'Kd3 vs Kd6 — white to move TAKES the opposition with Ke4! (or Kc4). The black king must give way.',
+    tryFen: '8/8/3k4/8/8/3K4/4P3/8 w - - 0 1',
     puzzles: [
       { fen: '8/8/3k4/8/8/3K4/4P3/8 w - - 0 1', prompt: 'White to play — seize the opposition.', accept: ['Ke4', 'Kc4'], hint: 'Mirror the black king: same file, one square between — but choose the side your pawn can use.' },
     ],

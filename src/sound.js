@@ -3,6 +3,10 @@
    of filtered noise for the wood contact. Captures are lower and louder. */
 
 let ctx = null;
+let muted = false;
+
+export function setSoundMuted(value) { muted = !!value; }
+export function isSoundMuted() { return muted; }
 
 function audioCtx() {
   if (!ctx) {
@@ -47,6 +51,7 @@ function knock(ac, { gain, at }) {
 
 /** Play a move sound. capture = true for a heavier capture thud. */
 export function playMoveSound({ capture = false } = {}) {
+  if (muted) return;
   const ac = audioCtx();
   if (!ac) return;
   const t = ac.currentTime + 0.001;
