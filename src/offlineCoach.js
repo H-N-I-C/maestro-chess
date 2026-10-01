@@ -54,9 +54,10 @@ export async function offlineCoachReply({ fen, pgn, message, history, stage }) {
   // keyword-ish intents get richer answers
   const wantsConcept = /(fork|pin|skewer|mate|opening|endgame|tactic|what should|plan|idea|help)/.test(q);
 
+  // single shallow pass — the shared engine queue stays responsive for moves
   const [before, after] = await Promise.all([
     pgn ? evalAfterLastMove(pgn) : Promise.resolve(null),
-    analyze(fen, { depth: 11, movetime: 350 }),
+    analyze(fen, { depth: 6, movetime: 200 }),
   ]);
 
   lines.push(`Looking at the position: it's ${describeEval(after.cp ?? 0, side)}.`);
@@ -93,7 +94,7 @@ async function evalAfterLastMove(pgn) {
     const g2 = new Chess();
     g2.loadPgn(pgn);
     g2.undo();
-    const res = await analyze(g2.fen(), { depth: 10, movetime: 250 });
+    const res = await analyze(g2.fen(), { depth: 6, movetime: 150 });
     return { cpBefore: res.cp, best: res.bestmove };
   } catch {
     return null;

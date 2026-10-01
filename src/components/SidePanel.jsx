@@ -5,8 +5,8 @@ import {
   getCoachLog, clearCoachLog,
 } from '../coachConfig.js';
 
-const DEFAULT_BASE = 'https://api.moonshot.ai/v1';
-const DEFAULT_MODEL = 'kimi-k2-0711-preview';
+const DEFAULT_BASE = 'https://api.moonshot.cn/v1';
+const DEFAULT_MODEL = 'kimi-k3';
 
 export default function SidePanel({ onClose }) {
   const [tab, setTab] = useState('settings');
@@ -29,9 +29,12 @@ function Settings() {
   const [baseUrl, setBaseUrl] = useState(cfg.baseUrl || '');
   const [apiKey, setApiKey] = useState(cfg.apiKey || '');
   const [model, setModel] = useState(cfg.model || '');
+  const [effort, setEffort] = useState(cfg.effort || '');
   const [showKey, setShowKey] = useState(false);
   const [status, setStatus] = useState(null); // {live, model, base}
   const [test, setTest] = useState(null); // {state, message}
+  const [models, setModels] = useState(null); // string[] | null
+  const [fetchingModels, setFetchingModels] = useState(false);
 
   useEffect(() => {
     coachStatus().then(setStatus);
@@ -44,13 +47,14 @@ function Settings() {
   };
 
   function save() {
-    saveCoachConfig({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), model: model.trim() });
+    saveCoachConfig({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), model: model.trim(), effort });
     setTest({ state: 'ok', message: 'Saved. The next coach message uses this configuration.' });
   }
 
   function reset() {
     clearCoachConfig();
-    setBaseUrl(''); setApiKey(''); setModel('');
+    setBaseUrl(''); setApiKey(''); setModel(''); setEffort('');
+    setModels(null);
     setTest({ state: 'ok', message: 'Cleared — falling back to the server configuration.' });
     coachStatus().then(setStatus);
   }
@@ -62,7 +66,7 @@ function Settings() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          config: { baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), model: model.trim() },
+          config: { baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), model: model.trim(), effort },
           messages: [{ role: 'user', content: 'Reply with exactly: connection ok' }],
         }),
       });
@@ -76,6 +80,29 @@ function Settings() {
       }
     } catch (err) {
       setTest({ state: 'err', message: 'Failed: ' + String(err) });
+    }
+  }
+
+  async function fetchModels() {
+    setFetchingModels(true);
+    setModels(null);
+    try {
+      const params = new URLSearchParams({
+        baseUrl: baseUrl.trim(),
+        apiKey: apiKey.trim(),
+      });
+      const res = await fetch(`/api/coach/models?${params}`);
+      const data = await res.json();
+      if (data.ok && data.models?.length) {
+        setModels(data.models);
+        setTest({ state: 'ok', message: `Fetched ${data.models.length} models — pick one from the dropdown.` });
+      } else {
+        setTest({ state: 'err', message: 'Failed to fetch models: ' + (data.error || 'none returned') });
+      }
+    } catch (err) {
+      setTest({ state: 'err', message: 'Failed to fetch models: ' + String(err) });
+    } finally {
+      setFetchingModels(false);
     }
   }
 
@@ -96,6 +123,17 @@ function Settings() {
         Base URL
         <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={DEFAULT_BASE} autoComplete="off" />
       </label>
+      <p className="side-note">
+        Kimi Coding plan key (<code>sk-kimi-…</code>)? Use <code>https://api.kimi.com/coding/v1</code>{' '}
+        with model <code>kimi-for-coding</code> —{' '}
+        <button
+          type="button"
+          className="linklike"
+          onClick={() => { setBaseUrl('https://api.kimi.com/coding/v1'); setModel('kimi-for-coding'); }}
+        >
+          fill in for me
+        </button>
+      </p>
       <label>
         API key
         <span className="key-row">
@@ -111,7 +149,33 @@ function Settings() {
       </label>
       <label>
         Model
-        <input value={model} onChange={(e) => setModel(e.target.value)} placeholder={DEFAULT_MODEL} autoComplete="off" />
+        <span className="key-row">
+          <input value={model} onChange={(e) => { setModel(e.target.value); setModels(null); }} placeholder={DEFAULT_MODEL} autoComplete="off" />
+          <button className="mini" onClick={fetchModels} disabled={fetchingModels || (!apiKey.trim() && !status?.envConfigured)}>
+            {fetchingModels ? 'Fetching…' : 'Fetch'}
+          </button>
+        </span>
+        {models && (
+          <select
+            className="model-picker"
+            value={models.includes(model) ? model : ''}
+            onChange={(e) => setModel(e.target.value)}
+          >
+            {!models.includes(model) && <option value="">— choose a model —</option>}
+            {models.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </select>
+        )}
+      </label>
+      <label>
+        Reasoning effort
+        <select className="model-picker" value={effort} onChange={(e) => setEffort(e.target.value)}>
+          <option value="">Default (model decides)</option>
+          <option value="low">Low — fastest, cheapest</option>
+          <option value="high">High</option>
+          <option value="max">Max — deepest thinking</option>
+        </select>
       </label>
       <div className="side-actions">
         <button className="primary" onClick={save}>Save</button>

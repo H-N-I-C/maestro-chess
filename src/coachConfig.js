@@ -7,7 +7,11 @@ const LOG_MAX = 100;
 
 export function getCoachConfig() {
   try {
-    return JSON.parse(localStorage.getItem(CONFIG_KEY)) || {};
+    const cfg = JSON.parse(localStorage.getItem(CONFIG_KEY)) || {};
+    // legacy defaults are no longer served by the platform — treat them as unset
+    if (cfg.model === 'kimi-k2-0711-preview') delete cfg.model;
+    if (cfg.baseUrl === 'https://api.moonshot.ai/v1') delete cfg.baseUrl;
+    return cfg;
   } catch {
     return {};
   }
