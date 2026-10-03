@@ -7,6 +7,7 @@ import {
   replay, lookup, addLine, removeLine, hasLine, emptyRepertoire, mergeRepertoire, STARTERS,
   turnAfter, nextMoves, pickOpponentMove, cardId, review, dueLineCount,
 } from '../openingTrainer.js';
+import { useT } from '../i18n.js';
 import './openings.css';
 
 const REP_KEY = 'maestro-repertoire';
@@ -21,8 +22,6 @@ function load(key, fallback) {
 function save(key, value) {
   try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* storage unavailable */ }
 }
-
-const COLOR_NAME = { w: 'White', b: 'Black' };
 
 /** SAN + capture flag for a board move from `fen`, or null if illegal. */
 function toSan(fen, { from, to, promotion }) {
@@ -39,9 +38,10 @@ function squaresOf(fen, san) {
 }
 
 function MoveList({ sans, cursor, onJump }) {
-  if (!sans.length) return <p className="op-muted">Starting position. Play a move or pick one below.</p>;
+  const t = useT();
+  if (!sans.length) return <p className="op-muted">{t('openings.start')}</p>;
   return (
-    <ol className="op-moves" aria-label="Moves">
+    <ol className="op-moves" aria-label={t('openings.moves')}>
       {sans.map((s, i) => (
         <li key={i} className={i % 2 === 0 ? 'w' : 'b'}>
           {i % 2 === 0 && <span className="op-num">{i / 2 + 1}.</span>}
@@ -58,6 +58,8 @@ function MoveList({ sans, cursor, onJump }) {
 }
 
 export default function Openings() {
+  const t = useT();
+  const colorName = (c) => t(c === 'w' ? 'common.white' : 'common.black');
   const [mode, setMode] = useState('explore');
   const [rep, setRep] = useState(() => {
     const r = load(REP_KEY, emptyRepertoire());
@@ -97,14 +99,14 @@ export default function Openings() {
 
   useEffect(() => {
     const onKey = (e) => {
-      const t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const el = e.target;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       // Listening on document (after React's root handlers, before window):
       // the hidden Play tab listens for arrows on window and must not react
       // while Openings is showing, so stop the event here.
       e.stopPropagation();
-      if (mode !== 'explore' || t?.closest?.('.board')) return; // board uses arrows for keyboard play
+      if (mode !== 'explore' || el?.closest?.('.board')) return; // board uses arrows for keyboard play
       e.preventDefault();
       if (e.key === 'ArrowLeft') back(); else forward();
     };
@@ -115,7 +117,7 @@ export default function Openings() {
   const addCurrent = (color) => {
     if (!shown.length) return;
     setRep((r) => addLine(r, color, shown));
-    setAnnounce(`Line added to your ${COLOR_NAME[color]} repertoire`);
+    setAnnounce(t(`openings.added.${color}`));
   };
 
   const exploreLine = (l) => { setLine(l); setCursor(l.length); setMode('explore'); };
@@ -135,7 +137,7 @@ export default function Openings() {
     setDrillColor(color);
     setOrientation(color);
     setDrill({ sans: [], misses: 0, wrongFen: null, hint: null, results: { ok: 0, bad: 0 }, done: false });
-    setAnnounce(`Drill started as ${COLOR_NAME[color]}`);
+    setAnnounce(t(`openings.drillStarted.${color}`));
   };
 
   // trainer plays the opponent's moves
@@ -159,7 +161,7 @@ export default function Openings() {
   useEffect(() => {
     if (drill?.done) {
       const { ok, bad } = drill.results;
-      setAnnounce(`Line complete: ${ok} correct, ${bad} missed`);
+      setAnnounce(t('openings.say.complete', { ok, bad }));
     }
   }, [drill?.done]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -177,7 +179,7 @@ export default function Openings() {
       playMoveSound({ capture: r.capture });
       const clean = drill.misses === 0;
       if (clean) setSrs((s) => ({ ...s, [id]: review(s[id], true) }));
-      setAnnounce(clean ? 'Correct' : `Correct — ${r.san}`);
+      setAnnounce(clean ? t('openings.say.correct') : t('openings.say.correctAfter', { san: r.san }));
       setDrill((d) => ({
         ...d, sans: [...d.sans, r.san], misses: 0, hint: null,
         results: clean ? { ...d.results, ok: d.results.ok + 1 } : d.results,
@@ -191,7 +193,7 @@ export default function Openings() {
     if (misses === 1) setSrs((s) => ({ ...s, [id]: review(s[id], false) }));
     const answer = expected[0];
     const hint = misses >= 2 ? squaresOf(base, answer) : null;
-    setAnnounce(misses >= 2 ? `Not in your repertoire. The move is ${answer}` : 'Not in your repertoire. Try again');
+    setAnnounce(misses >= 2 ? t('openings.say.wrongAnswer', { san: answer }) : t('openings.say.wrongRetry'));
     setDrill((d) => ({
       ...d, wrongFen: g.fen(), wrongMove: { from: r.from, to: r.to }, misses, hint,
       results: misses === 1 ? { ...d.results, bad: d.results.bad + 1 } : d.results,
@@ -228,15 +230,15 @@ export default function Openings() {
 
   return (
     <div className="openings">
-      <div className="op-modes" role="tablist" aria-label="Openings mode">
-        {[['explore', 'Explore'], ['repertoire', 'Repertoire'], ['drill', 'Drill']].map(([id, label]) => (
+      <div className="op-modes" role="tablist" aria-label={t('openings.modes')}>
+        {['explore', 'repertoire', 'drill'].map((id) => (
           <button
             key={id} type="button" role="tab" aria-selected={mode === id}
             className={`op-mode${mode === id ? ' active' : ''}`}
             onClick={() => setMode(id)}
           >
-            {label}
-            {id === 'drill' && dueW + dueB > 0 && <span className="op-badge" aria-label={`${dueW + dueB} lines due`}>{dueW + dueB}</span>}
+            {t(`openings.mode.${id}`)}
+            {id === 'drill' && dueW + dueB > 0 && <span className="op-badge" aria-label={t('openings.linesDue', { count: dueW + dueB })}>{dueW + dueB}</span>}
           </button>
         ))}
       </div>
@@ -245,11 +247,11 @@ export default function Openings() {
         <div className="op-board">
           <Board {...boardProps} />
           {mode === 'explore' && (
-            <div className="op-nav" role="group" aria-label="Move navigation">
-              <button type="button" className="icon-btn" onClick={back} disabled={cursor === 0} aria-label="Back (Left arrow)">‹</button>
-              <button type="button" className="icon-btn" onClick={forward} disabled={cursor >= line.length} aria-label="Forward (Right arrow)">›</button>
-              <button type="button" className="mini" onClick={reset}>Reset</button>
-              <button type="button" className="mini" onClick={() => setOrientation((o) => (o === 'w' ? 'b' : 'w'))}>Flip board</button>
+            <div className="op-nav" role="group" aria-label={t('openings.nav')}>
+              <button type="button" className="icon-btn" onClick={back} disabled={cursor === 0} aria-label={t('openings.back')}>‹</button>
+              <button type="button" className="icon-btn" onClick={forward} disabled={cursor >= line.length} aria-label={t('openings.forward')}>›</button>
+              <button type="button" className="mini" onClick={reset}>{t('openings.reset')}</button>
+              <button type="button" className="mini" onClick={() => setOrientation((o) => (o === 'w' ? 'b' : 'w'))}>{t('openings.flip')}</button>
             </div>
           )}
         </div>
@@ -259,22 +261,22 @@ export default function Openings() {
             <>
               <div className="op-head">
                 {info.opening?.eco && <span className="op-eco">{info.opening.eco}</span>}
-                <h2 className="op-name">{name || 'Starting position'}</h2>
+                <h2 className="op-name">{name || t('openings.startingPosition')}</h2>
               </div>
               {info.opening?.idea && <p className="op-idea">{info.opening.idea}</p>}
-              {info.transposed && <p className="op-muted">Reached by transposition.</p>}
-              {!info.inBook && shown.length > 0 && <p className="op-muted">Out of book — this move isn’t in Maestro’s opening tree.</p>}
+              {info.transposed && <p className="op-muted">{t('openings.transposed')}</p>}
+              {!info.inBook && shown.length > 0 && <p className="op-muted">{t('openings.outOfBook')}</p>}
               <MoveList sans={line} cursor={cursor} onJump={setCursor} />
               {info.continuations.length > 0 && (
                 <>
-                  <h3 className="op-sub">Known continuations</h3>
+                  <h3 className="op-sub">{t('openings.continuations')}</h3>
                   <ul className="op-conts">
                     {info.continuations.map((c) => (
                       <li key={c.san}>
                         <button
                           type="button" className="op-cont"
                           onClick={() => playExplore(c.san, squaresOf(exploreFen, c.san).capture)}
-                          aria-label={`Play ${c.san}${c.name ? `, ${c.name}` : ''}`}
+                          aria-label={c.name ? t('openings.playContNamed', { san: c.san, name: c.name }) : t('openings.playCont', { san: c.san })}
                         >
                           <strong>{c.san}</strong>
                           {c.name && <span>{c.name}</span>}
@@ -291,7 +293,7 @@ export default function Openings() {
                     disabled={!shown.length || hasLine(rep, c, shown)}
                     onClick={() => addCurrent(c)}
                   >
-                    {hasLine(rep, c, shown) && shown.length ? `In ${COLOR_NAME[c]} repertoire` : `Add line for ${COLOR_NAME[c]}`}
+                    {hasLine(rep, c, shown) && shown.length ? t(`openings.inRep.${c}`) : t(`openings.addFor.${c}`)}
                   </button>
                 ))}
               </div>
@@ -300,23 +302,23 @@ export default function Openings() {
 
           {mode === 'repertoire' && (
             <>
-              <h2 className="op-name">My repertoire</h2>
-              <p className="op-muted">Add lines from Explore, or load a starter set.</p>
+              <h2 className="op-name">{t('openings.myRepertoire')}</h2>
+              <p className="op-muted">{t('openings.repHelp')}</p>
               <div className="op-starters">
                 {STARTERS.map((s) => (
                   <button
                     key={s.id} type="button" className="mini"
-                    onClick={() => { setRep((r) => mergeRepertoire(r, s.rep)); setAnnounce(`${s.label} loaded`); }}
-                  >Load {s.label}</button>
+                    onClick={() => { setRep((r) => mergeRepertoire(r, s.rep)); setAnnounce(t('openings.loaded', { name: t(`openings.starter.${s.id}`) })); }}
+                  >{t('openings.load', { name: t(`openings.starter.${s.id}`) })}</button>
                 ))}
               </div>
               {['w', 'b'].map((c) => (
-                <section key={c} className="op-rep" aria-label={`${COLOR_NAME[c]} repertoire`}>
-                  <h3 className="op-sub">{COLOR_NAME[c]} · {rep[c].length} line{rep[c].length === 1 ? '' : 's'} · {c === 'w' ? dueW : dueB} due</h3>
-                  {rep[c].length === 0 && <p className="op-muted">No lines yet.</p>}
+                <section key={c} className="op-rep" aria-label={t(`openings.repLabel.${c}`)}>
+                  <h3 className="op-sub">{t('openings.repHeading', { color: colorName(c), count: rep[c].length, due: c === 'w' ? dueW : dueB })}</h3>
+                  {rep[c].length === 0 && <p className="op-muted">{t('openings.noLines')}</p>}
                   <ul>
                     {rep[c].map((l) => {
-                      const nm = lookup(l).opening?.name || openingName(l) || 'Custom line';
+                      const nm = lookup(l).opening?.name || openingName(l) || t('openings.customLine');
                       return (
                         <li key={l.join(' ')} className="op-rep-line">
                           <div>
@@ -324,8 +326,8 @@ export default function Openings() {
                             <span className="op-san">{l.map((s, i) => (i % 2 === 0 ? `${i / 2 + 1}.${s}` : s)).join(' ')}</span>
                           </div>
                           <div className="op-rep-actions">
-                            <button type="button" className="mini" onClick={() => exploreLine(l)} aria-label={`Explore ${nm}`}>View</button>
-                            <button type="button" className="mini" onClick={() => setRep((r) => removeLine(r, c, l))} aria-label={`Remove ${nm}`}>Remove</button>
+                            <button type="button" className="mini" onClick={() => exploreLine(l)} aria-label={t('openings.exploreNamed', { name: nm })}>{t('openings.view')}</button>
+                            <button type="button" className="mini" onClick={() => setRep((r) => removeLine(r, c, l))} aria-label={t('openings.removeNamed', { name: nm })}>{t('openings.remove')}</button>
                           </div>
                         </li>
                       );
@@ -338,8 +340,8 @@ export default function Openings() {
 
           {mode === 'drill' && (
             <>
-              <h2 className="op-name">Drill</h2>
-              <div className="op-drill-pick" role="group" aria-label="Drill colour">
+              <h2 className="op-name">{t('openings.drill')}</h2>
+              <div className="op-drill-pick" role="group" aria-label={t('openings.drillColour')}>
                 {['w', 'b'].map((c) => (
                   <button
                     key={c} type="button"
@@ -348,35 +350,35 @@ export default function Openings() {
                     onClick={() => startDrill(c)}
                     disabled={!rep[c].length}
                   >
-                    {COLOR_NAME[c]} · {c === 'w' ? dueW : dueB} due
+                    {t('openings.colorDue', { color: colorName(c), due: c === 'w' ? dueW : dueB })}
                   </button>
                 ))}
               </div>
-              {!repCount && <p className="op-muted">Your {COLOR_NAME[drillColor]} repertoire is empty. Add lines in Explore or load a starter in Repertoire.</p>}
+              {!repCount && <p className="op-muted">{t(`openings.emptyRep.${drillColor}`)}</p>}
               {repCount > 0 && !drill && (
                 <>
-                  <p className="op-muted">{(drillColor === 'w' ? dueW : dueB)} lines due. The trainer plays the other side; you play your repertoire move from memory.</p>
-                  <button type="button" className="primary" onClick={() => startDrill()}>Start drill</button>
+                  <p className="op-muted">{t('openings.drillIntro', { count: drillColor === 'w' ? dueW : dueB })}</p>
+                  <button type="button" className="primary" onClick={() => startDrill()}>{t('openings.startDrill')}</button>
                 </>
               )}
               {drill && (
                 <>
                   {drillInfo?.opening && <p className="op-idea"><span className="op-eco">{drillInfo.opening.eco}</span> {drillInfo.opening.name}</p>}
                   <p className="op-status">
-                    {drill.done ? 'Line complete!'
-                      : drill.wrongFen ? 'Not in your repertoire.'
-                        : userTurn ? (drill.hint ? 'Play the arrowed move.' : drill.misses ? 'Try again.' : 'Your move.')
-                          : 'Trainer is thinking…'}
+                    {drill.done ? t('openings.lineComplete')
+                      : drill.wrongFen ? t('openings.notInRep')
+                        : userTurn ? (drill.hint ? t('openings.playArrowed') : drill.misses ? t('openings.tryAgain') : t('openings.yourMove'))
+                          : t('openings.trainerThinking')}
                   </p>
                   <MoveList sans={drill.sans} cursor={drill.sans.length} onJump={() => {}} />
                   {drill.done && (
                     <div className="op-summary">
-                      <p><strong>{drill.results.ok}</strong> correct first try, <strong>{drill.results.bad}</strong> missed.</p>
-                      <p className="op-muted">{drillColor === 'w' ? dueW : dueB} lines still due.</p>
-                      <button type="button" className="primary" onClick={() => startDrill()}>Next line</button>
+                      <p>{t('openings.summary', { ok: drill.results.ok, bad: drill.results.bad })}</p>
+                      <p className="op-muted">{t('openings.stillDue', { count: drillColor === 'w' ? dueW : dueB })}</p>
+                      <button type="button" className="primary" onClick={() => startDrill()}>{t('openings.nextLine')}</button>
                     </div>
                   )}
-                  {!drill.done && <button type="button" className="mini" onClick={() => startDrill()}>Restart line</button>}
+                  {!drill.done && <button type="button" className="mini" onClick={() => startDrill()}>{t('openings.restart')}</button>}
                 </>
               )}
             </>
