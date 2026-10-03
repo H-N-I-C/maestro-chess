@@ -10,6 +10,7 @@ import { hostGame, joinGame, makeCode } from '../online.js';
 import { openingName } from '../openings.js';
 import { resetCoachChat } from '../coachChat.js';
 import { useClocks, TIME_CONTROLS, migrateTimeControl, formatClock } from '../hooks/useClocks.js';
+import { saveGame, updateRating, getRating, suggestedLevel } from '../library.js';
 import { gameFromHistory, playMove, drawReason, capturedFromHistory, isValidHistory } from '../gameUtils.js';
 
 const COACH_OPEN_KEY = 'maestro-coach-open';
@@ -90,7 +91,7 @@ function CapturedTray({ victims, advantage, pieceColor }) {
   );
 }
 
-export default function Play() {
+export default function Play({ active = true, onAnalyze = () => {} }) {
   const saved = useMemo(loadSavedGame, []);
   const savedOnline = useMemo(loadSavedOnline, []);
   const [customElo, setCustomElo] = useState(() => {
@@ -154,7 +155,10 @@ export default function Play() {
   const [rejoin, setRejoin] = useState(savedOnline?.code ? savedOnline : null); // restorable online game
   const [results, setResults] = useState(loadResults);
   const resultRecorded = useRef(false);
+  const [savedGameId, setSavedGameId] = useState(null); // library id of the last finished game
+  const [ratingChange, setRatingChange] = useState(null); // {rating, delta} after a rated game
   const onlineRef = useRef(null); // { peer, conn, role, prevColor }
+  const [spectators, setSpectators] = useState(0); // watchers connected to our hosted game
   const myOfferRef = useRef(null); // 'draw'|'takeback'|'newgame' we sent and await an answer to
 
   const [timeOver, setTimeOver] = useState(null); // 'w' | 'b' flagged side (vs engine)
@@ -198,6 +202,7 @@ export default function Play() {
   }
   function resetOnlineClocks() { clk.reset(clockId); }
   const [hintMove, setHintMove] = useState(null); // {from,to,san}
+  const [premove, setPremove] = useState(null); // {from,to,promotion} queued during the opponent's turn
   const hintBusyRef = useRef(false);
   const hintTimerRef = useRef(null);
 
@@ -249,6 +254,7 @@ export default function Play() {
   // arrow-key move navigation (ignored while typing)
   useEffect(() => {
     function onKey(e) {
+      if (!active) return; // Play stays mounted behind other tabs
       if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
@@ -258,7 +264,7 @@ export default function Play() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [history, viewIndex]);
+  }, [history, viewIndex, active]);
 
   useEffect(() => {
     return () => { if (hintTimerRef.current) clearTimeout(hintTimerRef.current); };
@@ -354,7 +360,10 @@ export default function Play() {
 
   function newGame(c = color, d = difficulty) {
     gameId.current += 1;
+    setPremove(null);
     resultRecorded.current = false;
+    setSavedGameId(null);
+    setRatingChange(null);
     resetCoachChat();
     clearHint();
     setManualResult(null);
@@ -406,7 +415,10 @@ export default function Play() {
 
   function startWatch() {
     gameId.current += 1;
+    setPremove(null);
     resultRecorded.current = false;
+    setSavedGameId(null);
+    setRatingChange(null);
     clearHint();
     setManualResult(null);
     setTimeOver(null);
@@ -491,6 +503,7 @@ export default function Play() {
 
   // ---- online multiplayer (host is White and authoritative) ----
   function resetBoardState(g) {
+    setPremove(null);
     setGame(g);
     setLastMove(null);
     setHistory([{ fen: g.fen(), lastMove: null }]);
@@ -502,10 +515,13 @@ export default function Play() {
     setManualResult(null);
     setTimeOver(null);
     resultRecorded.current = false;
+    setSavedGameId(null);
+    setRatingChange(null);
   }
 
   function openLobby() {
     gameId.current += 1;
+    setPremove(null);
     setMode('play');
     setOnline({ status: 'idle', code: '', role: null, error: '' });
   }
@@ -517,6 +533,14 @@ export default function Play() {
       onConnected: (conn) => {
         const cur = onlineRef.current;
         if (!cur) { conn.close(); return; }
+        if (conn.metadata?.role === 'spectator') {
+          // read-only watchers get every state update but can't act
+          cur.spectators = [...(cur.spectators || []).filter((c) => c.open), conn].slice(-20);
+          const s = liveRef.current;
+          try { conn.send(stateMessage(s.game.fen(), s.history, s.captured, s.lastMove)); } catch { /* ignore */ }
+          setSpectators(cur.spectators.length);
+          return;
+        }
         // a game already has its player — reject extra connections
         if (cur.conn && cur.conn.open && cur.conn !== conn) {
           try { conn.send({ t: 'busy' }); } catch { /* ignore */ }
@@ -534,8 +558,20 @@ export default function Play() {
           beginOnlineGame('host');
         }
       },
-      onData: onlineHostData,
-      onClose: () => setOppGone(true),
+      onData: (d, conn) => {
+        // only the seated opponent can move, chat or make offers
+        if (conn && conn !== onlineRef.current?.conn) return;
+        onlineHostData(d);
+      },
+      onClose: (conn) => {
+        const cur = onlineRef.current;
+        if (cur && conn && conn !== cur.conn) {
+          cur.spectators = (cur.spectators || []).filter((c) => c !== conn && c.open);
+          setSpectators(cur.spectators.length);
+          return;
+        }
+        setOppGone(true);
+      },
       onError: (e) => setOnline((o) => ({ ...o, status: o.status === 'playing' ? o.status : 'error', error: onlineErrorText(e) })),
     };
   }
@@ -575,10 +611,18 @@ export default function Play() {
     if (role === 'host') resetOnlineClocks();
   }
 
+  function stateMessage(fen, hist, caps, lm) {
+    return { t: 'state', fen, history: hist, captured: caps, lastMove: lm, clocks: onlineClockSnapshot(), over: liveRef.current?.onlineOver || null };
+  }
+
+  /** Send the authoritative state to the opponent and every spectator. */
   function hostSync(fen, hist, caps, lm) {
-    try {
-      onlineRef.current?.conn?.send({ t: 'state', fen, history: hist, captured: caps, lastMove: lm, clocks: onlineClockSnapshot() });
-    } catch { /* connection closing */ }
+    const msg = stateMessage(fen, hist, caps, lm);
+    const cur = onlineRef.current;
+    for (const c of [cur?.conn, ...(cur?.spectators || [])]) {
+      if (!c?.open) continue;
+      try { c.send(msg); } catch { /* connection closing */ }
+    }
   }
 
   /** Host applies a validated move (its own or the guest's) and syncs it. */
@@ -649,6 +693,7 @@ export default function Play() {
   }
 
   function rebuildFromHistory(hist) {
+    setPremove(null);
     const last = hist[hist.length - 1];
     setGame(gameFromHistory(hist));
     setHistory(hist);
@@ -764,7 +809,10 @@ export default function Play() {
       return;
     }
     gameId.current += 1;
+    setPremove(null);
     resultRecorded.current = false;
+    setSavedGameId(null);
+    setRatingChange(null);
     resetCoachChat();
     clearHint();
     setManualResult(null);
@@ -983,25 +1031,14 @@ export default function Play() {
     // record the result once per finished game (a watched engine game is not a result)
     if (mode === 'watch') return;
     if (resultRecorded.current) return;
-    resultRecorded.current = true;
-    setResults((r) => {
-      const next = JSON.parse(JSON.stringify(r));
-      let outcome; // 'w' | 'l' | 'd' from the local player's perspective
-      if (game.isDraw() || game.isStalemate()) outcome = 'd';
-      else {
-        const winner = game.turn() === 'w' ? 'b' : 'w';
-        const me = mode === 'online' ? (online.role === 'host' ? 'w' : 'b') : color;
-        outcome = winner === me ? 'w' : 'l';
-      }
-      if (mode === 'online') next.online[outcome] += 1;
-      else {
-        const id = difficulty.id;
-        next.engine[id] = next.engine[id] || { w: 0, l: 0, d: 0 };
-        next.engine[id][outcome] += 1;
-      }
-      localStorage.setItem(RESULTS_KEY, JSON.stringify(next));
-      return next;
-    });
+    let outcome; // 'w' | 'l' | 'd' from the local player's perspective
+    if (game.isDraw() || game.isStalemate()) outcome = 'd';
+    else {
+      const winner = game.turn() === 'w' ? 'b' : 'w';
+      const me = mode === 'online' ? (online.role === 'host' ? 'w' : 'b') : color;
+      outcome = winner === me ? 'w' : 'l';
+    }
+    recordResult(outcome);
   }, [game, color]); // eslint-disable-line
 
   // endings that don't come from a terminal board position: flagging,
@@ -1012,16 +1049,8 @@ export default function Play() {
     if (timeOver) outcome = timeOver === color ? 'l' : 'w';
     else if (manualResult) outcome = manualResult.outcome;
     if (!outcome || resultRecorded.current) return;
-    resultRecorded.current = true;
-    setResults((r) => {
-      const next = JSON.parse(JSON.stringify(r));
-      const id = difficulty.id;
-      next.engine[id] = next.engine[id] || { w: 0, l: 0, d: 0 };
-      next.engine[id][outcome] += 1;
-      localStorage.setItem(RESULTS_KEY, JSON.stringify(next));
-      return next;
-    });
-  }, [timeOver, manualResult, mode, color, difficulty]);
+    recordResult(outcome);
+  }, [timeOver, manualResult, mode, color, difficulty]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // online games can end by resignation or an agreed draw without the
   // board position being terminal — tally those once, like the effect above
@@ -1032,14 +1061,72 @@ export default function Play() {
       : onlineOver === 'draw-agreed' ? 'd'
       : null;
     if (!outcome || resultRecorded.current) return;
+    recordResult(outcome);
+  }, [onlineOver]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // spectators learn about resignations, agreed draws and flags too
+  useEffect(() => {
+    if (mode !== 'online' || myColorOnline() !== 'w' || !onlineOver) return;
+    const s = liveRef.current;
+    hostSync(s.game.fen(), s.history, s.captured, s.lastMove);
+  }, [onlineOver]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function copySpectateLink() {
+    const url = `${window.location.origin}${window.location.pathname}#/watch/${online.code}`;
+    copyText(url, 'watch');
+  }
+
+  /**
+   * Once per finished game: tally it, save it to the library for review, and
+   * (vs Maestro, from the normal start position) update the rating estimate.
+   */
+  function recordResult(outcome) {
+    if (resultRecorded.current) return;
     resultRecorded.current = true;
-    setResults((r) => {
-      const next = JSON.parse(JSON.stringify(r));
-      next.online[outcome] += 1;
-      localStorage.setItem(RESULTS_KEY, JSON.stringify(next));
-      return next;
+    const online_ = mode === 'online';
+    const next = JSON.parse(JSON.stringify(results));
+    if (online_) next.online[outcome] += 1;
+    else {
+      next.engine[difficulty.id] = next.engine[difficulty.id] || { w: 0, l: 0, d: 0 };
+      next.engine[difficulty.id][outcome] += 1;
+    }
+    try { localStorage.setItem(RESULTS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+    setResults(next);
+
+    const plies = (history?.length || 1) - 1;
+    if (plies < 2) return; // nothing worth saving
+    const me = online_ ? myColorOnline() : color;
+    const oppName = online_ ? 'Opponent' : `Maestro (${difficulty.label}${difficulty.elo ? ` ~${difficulty.elo}` : ''})`;
+    const result = outcome === 'd' ? '1/2-1/2' : (outcome === 'w') === (me === 'w') ? '1-0' : '0-1';
+    const saved = saveGame({
+      pgn: buildPgn(),
+      white: me === 'w' ? 'You' : oppName,
+      black: me === 'b' ? 'You' : oppName,
+      result,
+      source: online_ ? 'online' : 'engine',
+      userColor: me,
+      opponentElo: online_ ? null : difficulty.elo || 2850,
+      timeControl: clk.tc.base ? clk.tc.label : null,
     });
-  }, [onlineOver]);
+    setSavedGameId(saved.id);
+    const fromStart = history?.[0]?.fen === new Chess().fen();
+    if (!online_ && fromStart) {
+      const r = updateRating(difficulty.elo || 2850, outcome === 'w' ? 1 : outcome === 'd' ? 0.5 : 0);
+      setRatingChange(r);
+    }
+  }
+
+  // premoves: queued while the opponent (engine or online) is to move, then
+  // played the moment it's our turn — dropped silently if no longer legal
+  const premoveAllowed = (mode === 'play' || mode === 'online') && viewIndex === null && !onlineOver && !manualResult && !timeOver && !game.isGameOver();
+  useEffect(() => {
+    if (!premove) return;
+    if (!premoveAllowed) { setPremove(null); return; }
+    if (game.turn() !== color || thinking) return;
+    const p = premove;
+    setPremove(null);
+    if (game.moves({ verbose: true }).some((m) => m.from === p.from && m.to === p.to)) onMove(p);
+  }, [game, thinking, premoveAllowed]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function onMove({ from, to, promotion }) {
     if (mode === 'watch') return;
@@ -1348,7 +1435,10 @@ export default function Play() {
             lastMove={boardLastMove}
             hint={viewing ? null : hintMove}
             pieceSet={pieceSet}
-            viewOnly={viewing || mode === 'watch' || !!onlineOver || !!manualResult || !!timeOver || (mode === 'online' && game.turn() !== color)}
+            viewOnly={viewing || mode === 'watch' || !!onlineOver || !!manualResult || !!timeOver || game.isGameOver()}
+            premove={premove}
+            onPremove={premoveAllowed ? setPremove : null}
+            playerColor={color}
             showCoords={showCoords}
             blindfold={blindfold}
             flashSquare={flashSquare}
@@ -1366,6 +1456,12 @@ export default function Play() {
               <button type="button" className="mini" onClick={requestTakeback} disabled={(history?.length || 1) < 2 || !!pendingOffer}>Takeback</button>
               <button type="button" className="mini" onClick={offerDraw} disabled={!!pendingOffer}>Offer draw</button>
               <button type="button" className="mini resign" onClick={resign}>Resign</button>
+              {online.code && (
+                <button type="button" className="mini" onClick={copySpectateLink} title="Anyone with this link can watch the game">
+                  {shareCopied === 'watch' ? 'Link copied!' : 'Spectator link'}
+                </button>
+              )}
+              {spectators > 0 && <span className="side-note">👁 {spectators}</span>}
             </div>
           )}
           {mode === 'watch' ? (
@@ -1467,9 +1563,24 @@ export default function Play() {
                   className="go-review"
                   onClick={() => setViewIndex((history?.length || 1) > 1 ? 1 : 0)}
                 >
-                  Review game
+                  Replay
                 </button>
+                {savedGameId && (
+                  <button type="button" className="go-review" onClick={() => onAnalyze(savedGameId)}>
+                    Analyze game
+                  </button>
+                )}
               </div>
+              {ratingChange && mode === 'play' && (
+                <p className="go-rating">
+                  Rating estimate: <strong>{ratingChange.rating}</strong>{' '}
+                  <span className={ratingChange.delta >= 0 ? 'up' : 'down'}>({ratingChange.delta >= 0 ? '+' : ''}{ratingChange.delta})</span>
+                  {ratingChange.games >= 5 && (() => {
+                    const s = suggestedLevel(DIFFICULTIES, ratingChange.rating);
+                    return s && s.id !== difficulty.id ? <> · try <strong>{s.label}</strong> next</> : null;
+                  })()}
+                </p>
+              )}
             </div>
           )}
           {mode === 'online' && (
@@ -1549,7 +1660,8 @@ export default function Play() {
             ? <>Online: <strong>{results.online.w}W</strong> · <strong>{results.online.l}L</strong> · <strong>{results.online.d}D</strong></>
             : (() => {
               const r = results.engine[difficulty.id] || { w: 0, l: 0, d: 0 };
-              return <>vs {difficulty.label}: <strong>{r.w}W</strong> · <strong>{r.l}L</strong> · <strong>{r.d}D</strong></>;
+              const rating = getRating();
+              return <>vs {difficulty.label}: <strong>{r.w}W</strong> · <strong>{r.l}L</strong> · <strong>{r.d}D</strong>{rating.games > 0 && <> · rating ~<strong>{rating.rating}</strong></>}</>;
             })()}
         </div>
       </aside>

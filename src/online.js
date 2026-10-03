@@ -17,7 +17,9 @@ export function makeCode() {
 }
 
 /**
- * Host a game. handlers: { onOpen, onConnected(conn), onData(data), onClose, onError(err) }
+ * Host a game. handlers: { onOpen, onConnected(conn), onData(data, conn), onClose(conn), onError(err) }
+ * Every handler gets the connection, so the host can tell its opponent apart
+ * from spectators (conn.metadata.role === 'spectator') and strangers.
  * Returns the Peer (call .destroy() to cancel/leave).
  */
 export function hostGame(code, handlers) {
@@ -25,19 +27,22 @@ export function hostGame(code, handlers) {
   peer.on('open', () => handlers.onOpen?.());
   peer.on('connection', (conn) => {
     conn.on('open', () => handlers.onConnected?.(conn));
-    conn.on('data', (d) => handlers.onData?.(d));
-    conn.on('close', () => handlers.onClose?.());
-    conn.on('error', (e) => handlers.onError?.(e));
+    conn.on('data', (d) => handlers.onData?.(d, conn));
+    conn.on('close', () => handlers.onClose?.(conn));
+    conn.on('error', (e) => handlers.onError?.(e, conn));
   });
   peer.on('error', (e) => handlers.onError?.(e));
   return peer;
 }
 
-/** Join a game by code. Same handler shape as hostGame. */
-export function joinGame(code, handlers) {
+/** Join a game by code (as the opponent, or with {spectator:true} to watch). */
+export function joinGame(code, handlers, { spectator = false } = {}) {
   const peer = new Peer();
   peer.on('open', () => {
-    const conn = peer.connect(PREFIX + code.toLowerCase().trim(), { reliable: true });
+    const conn = peer.connect(PREFIX + code.toLowerCase().trim(), {
+      reliable: true,
+      metadata: { role: spectator ? 'spectator' : 'player' },
+    });
     conn.on('open', () => handlers.onConnected?.(conn));
     conn.on('data', (d) => handlers.onData?.(d));
     conn.on('close', () => handlers.onClose?.());

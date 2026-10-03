@@ -8,6 +8,7 @@ const Puzzles = lazy(() => import('./components/Puzzles.jsx'));
 const Openings = lazy(() => import('./components/Openings.jsx'));
 const Analysis = lazy(() => import('./components/Analysis.jsx'));
 const Games = lazy(() => import('./components/Games.jsx'));
+const Spectate = lazy(() => import('./components/Spectate.jsx'));
 
 const TABS = [
   { id: 'play', label: 'Play', icon: 'M6 20h12v-2H6v2Zm2-3h8l-1-7 2-3-3-2V3h-4v2L7 7l2 3-1 7Z' },
@@ -35,6 +36,7 @@ const SOUND_KEY = 'maestro-sound-muted';
 
 export default function App() {
   const [route, setRoute] = useState(parseHash);
+  const watching = route.tab === 'watch' && route.arg ? route.arg.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 12) : null;
   const tab = route.tab === 'watch' ? 'play' : route.tab;
   useEffect(() => {
     const onHash = () => setRoute(parseHash());
@@ -112,11 +114,12 @@ export default function App() {
       </header>
       <main>
         {/* Play stays mounted so a running game, clock or online connection survives tab switches */}
-        <div className="tab-pane" hidden={tab !== 'play'}>
-          <Play route={route} active={tab === 'play'} onAnalyze={(id) => go('analysis', id)} />
+        <div className="tab-pane" hidden={tab !== 'play' || Boolean(watching)}>
+          <Play active={tab === 'play' && !watching} onAnalyze={(id) => go('analysis', id)} />
         </div>
         {tab === 'learn' && <Lessons />}
         <Suspense fallback={<p className="loading-pane">Loading…</p>}>
+          {watching && <Spectate code={watching} onLeave={() => go('play')} />}
           {tab === 'puzzles' && <Puzzles />}
           {tab === 'openings' && <Openings />}
           {tab === 'analysis' && <Analysis gameId={route.arg} onOpenGame={(id) => go('analysis', id)} />}
