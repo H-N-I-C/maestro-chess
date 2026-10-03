@@ -623,6 +623,12 @@ button.link { background: none; border: none; color: var(--accent); padding: 0; 
   .board-wrap { width: min(100%, 92vw - 24px); }
   .theme-picker span { display: none; }
 }
+/* language picker: label hidden on phones, select stays narrow */
+@media (max-width: 760px) {
+  .lang-picker span { display: none; }
+  .lang-picker select { max-width: 84px; }
+  .theme-picker select { max-width: 120px; }
+}
 
 /* ---- coach / lessons additions (COACH-LESSONS-SERVER workstream) ---- */
 

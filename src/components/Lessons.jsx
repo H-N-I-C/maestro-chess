@@ -3,6 +3,7 @@ import { Chess } from 'chess.js';
 import Board from './Board.jsx';
 import CoachPanel from './CoachPanel.jsx';
 import { STAGES, LESSONS, lessonsForStage } from '../lessons.js';
+import { useT } from '../i18n.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const PROGRESS_KEY = 'maestro-lesson-progress';
@@ -29,6 +30,7 @@ function saveProgress(patch) {
 }
 
 function PuzzleBoard({ puzzle, solved, onSolved }) {
+  const t = useT();
   const [game, setGame] = useState(() => new Chess(puzzle.fen));
   const [done, setDone] = useState(solved);
   const [step, setStep] = useState(0);
@@ -76,9 +78,9 @@ function PuzzleBoard({ puzzle, solved, onSolved }) {
       <div className="puzzle-board"><Board fen={game.fen()} onMove={onMove} viewOnly={done || animating} /></div>
       <div className="puzzle-side">
         <p className="prompt">{puzzle.prompt}</p>
-        {done ? <p className="solved">Correct — {answerText}. Well spotted.</p> : (
+        {done ? <p className="solved">{t('lessons.correct', { answer: answerText })}</p> : (
           <div className="puzzle-actions">
-            <button onClick={() => setShowHint(true)}>Hint</button>
+            <button onClick={() => setShowHint(true)}>{t('lessons.hint')}</button>
             {showHint && <p className="hint">{puzzle.hint}</p>}
           </div>
         )}
@@ -89,6 +91,7 @@ function PuzzleBoard({ puzzle, solved, onSolved }) {
 
 /** Playable demo board: move both sides freely, reset restores the starting fen. */
 function TryBoard({ fen }) {
+  const t = useT();
   const [game, setGame] = useState(() => new Chess(fen));
   useEffect(() => { setGame(new Chess(fen)); }, [fen]);
 
@@ -104,13 +107,14 @@ function TryBoard({ fen }) {
     <div className="demo try-board">
       <Board fen={game.fen()} onMove={onMove} />
       <div className="try-board-bar">
-        <button onClick={() => setGame(new Chess(fen))}>Reset position</button>
+        <button onClick={() => setGame(new Chess(fen))}>{t('lessons.resetPosition')}</button>
       </div>
     </div>
   );
 }
 
 function LessonView({ lesson, onBack }) {
+  const t = useT();
   const [solvedIds, setSolvedIds] = useState(() => loadProgress().solved);
   const coachGame = useMemo(() => {
     const g = new Chess(lesson.demoFen || lesson.puzzles[0]?.fen || START_FEN);
@@ -138,7 +142,7 @@ function LessonView({ lesson, onBack }) {
 
   return (
     <div className="lesson-view">
-      <button className="link" onClick={onBack}>← All lessons</button>
+      <button className="link" onClick={onBack}>← {t('lessons.allLessons')}</button>
       <h2>{lesson.title}</h2>
       {lesson.intro.split('\n\n').map((p, i) => <p key={i} className="lesson-text">{p}</p>)}
       {lesson.tryFen ? (
@@ -150,7 +154,7 @@ function LessonView({ lesson, onBack }) {
         </div>
       )}
       {lesson.tryFen && lesson.demoNote && <p className="demo-note">{lesson.demoNote}</p>}
-      {lesson.puzzles.length > 0 && <h3>Your turn — {solvedCount}/{lesson.puzzles.length} solved</h3>}
+      {lesson.puzzles.length > 0 && <h3>{t('lessons.yourTurn', { solved: solvedCount, total: lesson.puzzles.length })}</h3>}
       {lesson.puzzles.map((p, i) => (
         <PuzzleBoard key={i} puzzle={p} solved={solvedIds.includes(`${lesson.id}:${i}`)} onSolved={() => markSolved(i)} />
       ))}
@@ -162,6 +166,7 @@ function LessonView({ lesson, onBack }) {
 }
 
 export default function Lessons() {
+  const t = useT();
   const initial = useMemo(loadProgress, []);
   const [stage, setStage] = useState(() => (STAGES.some((s) => s.id === initial.stage) ? initial.stage : STAGES[0].id));
   const [lesson, setLesson] = useState(() => LESSONS.find((l) => l.id === initial.lesson) || null);
@@ -198,8 +203,8 @@ export default function Lessons() {
               <span className="lesson-idx">{String(i + 1).padStart(2, '0')}</span>
               <span className="lesson-title">{l.title}</span>
               <span className="lesson-meta">
-                {l.puzzles.length} puzzle{l.puzzles.length === 1 ? '' : 's'}
-                {solvedCount > 0 && l.puzzles.length > 0 && ` · ${solvedCount} solved`}
+                {t('lessons.puzzleCount', { count: l.puzzles.length })}
+                {solvedCount > 0 && l.puzzles.length > 0 && ` · ${t('lessons.solvedCount', { count: solvedCount })}`}
               </span>
             </button>
           );

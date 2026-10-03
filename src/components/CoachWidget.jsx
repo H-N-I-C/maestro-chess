@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import CoachPanel from './CoachPanel.jsx';
+import { useT } from '../i18n.js';
 
 const BUBBLE_KEY = 'maestro-coach-bubble-pos';
 const PANEL_KEY = 'maestro-coach-widget-panel-pos';
@@ -23,6 +24,7 @@ function loadPos(key, fallback) {
  * bubble (without dragging it) opens the panel; dragging moves it.
  */
 export default function CoachWidget({ game, open, onOpen, onClose, panelRef }) {
+  const t = useT();
   const [bubblePos, setBubblePos] = useState(() => {
     const p = loadPos(BUBBLE_KEY, { x: 16, y: Math.max(80, window.innerHeight - 150 - BOTTOM_BAR) });
     // a position saved before the tab bar existed may sit underneath it
@@ -113,8 +115,8 @@ export default function CoachWidget({ game, open, onOpen, onClose, panelRef }) {
         className="coach-bubble"
         style={{ left: bubblePos.x, top: bubblePos.y }}
         onPointerDown={dragBubble}
-        aria-label="Open coach"
-        title="Coach"
+        aria-label={t('coach.open')}
+        title={t('coach.title')}
       >
         <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
           <path fill="currentColor" d="M4 4h16a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H9l-4.4 3.3A1 1 0 0 1 3 19.5V5a1 1 0 0 1 1-1Z" />

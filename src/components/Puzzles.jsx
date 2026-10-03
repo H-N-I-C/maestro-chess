@@ -7,6 +7,7 @@ import {
   normalizePuzzle, solverColor, uciToMove, moveToUci, updateRating,
   selectPuzzle, scheduleReview, dueReviews, checkMove, humanizeTheme,
 } from '../puzzleEngine.js';
+import { useT } from '../i18n.js';
 import './puzzles.css';
 
 const STORE_KEY = 'maestro-puzzles';
@@ -44,6 +45,7 @@ function applyUci(fen, uci) {
 }
 
 export default function Puzzles() {
+  const t = useT();
   const [puzzles, setPuzzles] = useState(null);
   const [loadError, setLoadError] = useState(false);
   const [store, setStore] = useState(loadStore);
@@ -105,9 +107,9 @@ export default function Puzzles() {
       setLastMove({ from: move.from, to: move.to });
       setPly(1);
       setStatus('play');
-      setAnnounce(`Your turn. Find the best move for ${solverColor(p) === 'w' ? 'White' : 'Black'}.`);
+      setAnnounce(t(solverColor(p) === 'w' ? 'puzzles.yourTurnWhite' : 'puzzles.yourTurnBlack'));
     }, 600);
-  }, [clearTimers, later, update]);
+  }, [clearTimers, later, update, t]);
 
   const next = useCallback((forceMode) => {
     if (!puzzles?.length) return;
@@ -151,10 +153,10 @@ export default function Puzzles() {
   function finish(won) {
     const r = record(won);
     setStatus('solved');
-    const change = r && r.delta ? ` Rating ${r.delta > 0 ? '+' : ''}${r.delta}.` : '';
+    const change = r && r.delta ? ' ' + t('puzzles.ratingChange', { delta: `${r.delta > 0 ? '+' : ''}${r.delta}` }) : '';
     setAnnounce(won === false || result?.won === false
-      ? `Solved, but not on the first try.${change}`
-      : `Correct, puzzle solved!${change}`);
+      ? t('puzzles.solvedNotFirst') + change
+      : t('puzzles.solvedCorrect') + change);
   }
 
   function onMove({ from, to, promotion }) {
@@ -171,7 +173,7 @@ export default function Puzzles() {
       const r = record(false);
       setStatus('opponent'); // block input while the move is taken back
       setWrong(to);
-      setAnnounce(`${played.move.san} is not it. Try again.${r && r.delta ? ` Rating ${r.delta}.` : ''}`);
+      setAnnounce(t('puzzles.wrongMove', { san: played.move.san }) + (r && r.delta ? ' ' + t('puzzles.ratingChange', { delta: r.delta }) : ''));
       const before = fen, prevLast = lastMove;
       later(() => {
         setFen(before);
@@ -186,7 +188,7 @@ export default function Puzzles() {
     if (verdict === 'mate' || nextPly >= puzzle.moves.length) { finish(true); return; }
     // opponent's scripted reply
     setStatus('opponent');
-    setAnnounce(`${played.move.san} — correct. Keep going.`);
+    setAnnounce(t('puzzles.correctKeepGoing', { san: played.move.san }));
     later(() => {
       const reply = applyUci(played.fen, puzzle.moves[nextPly]);
       playMoveSound({ capture: Boolean(reply.move.captured) });
@@ -210,12 +212,12 @@ export default function Puzzles() {
     setStatus('revealed');
     setWrong(null);
     setHintLevel(0);
-    setAnnounce('Showing the solution.');
+    setAnnounce(t('puzzles.showingSolution'));
     // play the remaining line from the current position, one move at a time
     let f = fen, i = ply;
     if (i === 0) { f = puzzle.fen; } // opponent's first move had not been played yet
     const step = () => {
-      if (i >= puzzle.moves.length) { setStatus('solved'); setAnnounce('Solution shown. Press Next for a new puzzle.'); return; }
+      if (i >= puzzle.moves.length) { setStatus('solved'); setAnnounce(t('puzzles.solutionShown')); return; }
       const { fen: nf, move } = applyUci(f, puzzle.moves[i]);
       playMoveSound({ capture: Boolean(move.captured) });
       f = nf; i += 1;
@@ -238,8 +240,8 @@ export default function Puzzles() {
     return () => window.removeEventListener('keydown', onKey);
   }, [status, next]);
 
-  if (loadError) return <p className="loading-pane">Could not load the puzzle set.</p>;
-  if (!puzzles || !puzzle) return <p className="loading-pane">Loading puzzles…</p>;
+  if (loadError) return <p className="loading-pane">{t('puzzles.loadError')}</p>;
+  if (!puzzles || !puzzle) return <p className="loading-pane">{t('puzzles.loading')}</p>;
 
   const solver = solverColor(puzzle);
   const expected = status === 'play' ? uciToMove(puzzle.moves[ply]) : null;
@@ -248,13 +250,13 @@ export default function Puzzles() {
   if (wrong) highlights[wrong] = 'pz-wrong-sq';
   const finished = status === 'solved';
   const provisional = store.games < PROVISIONAL_GAMES;
-  const themes = puzzle.themes.filter((t) => !['short', 'long', 'veryLong', 'oneMove'].includes(t));
+  const themes = puzzle.themes.filter((th) => !['short', 'long', 'veryLong', 'oneMove'].includes(th));
 
   let headline;
-  if (status === 'opponent' && ply === 0) headline = 'Opponent to move…';
-  else if (status === 'revealed') headline = 'Solution';
-  else if (finished) headline = result?.won ? 'Solved!' : 'Puzzle complete';
-  else headline = `${solver === 'w' ? 'White' : 'Black'} to play`;
+  if (status === 'opponent' && ply === 0) headline = t('puzzles.opponentToMove');
+  else if (status === 'revealed') headline = t('puzzles.solution');
+  else if (finished) headline = result?.won ? t('puzzles.solved') : t('puzzles.complete');
+  else headline = t(solver === 'w' ? 'puzzles.whiteToPlay' : 'puzzles.blackToPlay');
 
   return (
     <div className="pz">
@@ -272,70 +274,70 @@ export default function Puzzles() {
 
       <aside className="pz-side panel">
         <div className="pz-top">
-          <div className="pz-rating" title={provisional ? 'Provisional rating' : 'Puzzle rating'}>
-            <span className="pz-rating-label">Rating</span>
+          <div className="pz-rating" title={provisional ? t('puzzles.provisionalRating') : t('puzzles.puzzleRating')}>
+            <span className="pz-rating-label">{t('puzzles.rating')}</span>
             <strong>{store.rating}{provisional ? '?' : ''}</strong>
             {result && result.delta !== 0 && (
               <span className={`pz-delta ${result.delta > 0 ? 'up' : 'down'}`}>{result.delta > 0 ? '+' : ''}{result.delta}</span>
             )}
           </div>
-          <div className="pz-streak" title="Current streak">
-            <span className="pz-rating-label">Streak</span>
+          <div className="pz-streak" title={t('puzzles.currentStreak')}>
+            <span className="pz-rating-label">{t('puzzles.streak')}</span>
             <strong>{store.streak}</strong>
           </div>
         </div>
 
-        <div className="pz-modes" role="group" aria-label="Puzzle mode">
+        <div className="pz-modes" role="group" aria-label={t('puzzles.mode')}>
           <button className={mode === 'rated' ? 'active' : ''} aria-pressed={mode === 'rated'}
-            onClick={() => { setMode('rated'); if (mode !== 'rated') next('rated'); }}>Rated</button>
+            onClick={() => { setMode('rated'); if (mode !== 'rated') next('rated'); }}>{t('puzzles.rated')}</button>
           <button className={mode === 'review' ? 'active' : ''} aria-pressed={mode === 'review'} disabled={!due.length && mode !== 'review'}
             onClick={() => { setMode('review'); if (mode !== 'review') next('review'); }}>
-            Review mistakes ({due.length} due)
+            {t('puzzles.reviewMistakes', { count: due.length })}
           </button>
         </div>
 
         <label className="pz-filter">
-          <span>Theme</span>
+          <span>{t('puzzles.theme')}</span>
           <select value={store.theme} onChange={(e) => { update({ theme: e.target.value }); storeRef.current = { ...storeRef.current, theme: e.target.value }; next(); }}>
-            {THEME_FILTERS.map((f) => <option key={f.id} value={f.id}>{f.label}</option>)}
+            {THEME_FILTERS.map((f) => <option key={f.id} value={f.id}>{t(`puzzles.filter.${f.id}`)}</option>)}
           </select>
         </label>
 
         <div className={`pz-status ${finished ? (result?.won ? 'good' : 'meh') : ''} ${wrong ? 'bad' : ''}`}>
           <h2>{headline}</h2>
-          <p className="pz-meta">Puzzle rated {puzzle.rating}{mode === 'review' && store.srs[puzzle.id] ? ' · review' : ''}</p>
-          {wrong && <p className="pz-msg">Not the move — try again.</p>}
-          {!wrong && status === 'play' && result && !result.won && <p className="pz-msg">Keep going — this one no longer counts for rating.</p>}
+          <p className="pz-meta">{t('puzzles.ratedAt', { rating: puzzle.rating })}{mode === 'review' && store.srs[puzzle.id] ? ` · ${t('puzzles.reviewTag')}` : ''}</p>
+          {wrong && <p className="pz-msg">{t('puzzles.notTheMove')}</p>}
+          {!wrong && status === 'play' && result && !result.won && <p className="pz-msg">{t('puzzles.noLongerCounts')}</p>}
           {finished && (
-            <ul className="pz-themes" aria-label="Puzzle themes">
-              {themes.map((t) => <li key={t}>{humanizeTheme(t)}</li>)}
+            <ul className="pz-themes" aria-label={t('puzzles.themes')}>
+              {themes.map((th) => <li key={th}>{humanizeTheme(th)}</li>)}
             </ul>
           )}
         </div>
 
         <div className="pz-actions">
           {finished ? (
-            <button className="primary" onClick={() => next()} aria-label="Next puzzle (shortcut n)">Next puzzle</button>
+            <button className="primary" onClick={() => next()} aria-label={t('puzzles.nextAria')}>{t('puzzles.next')}</button>
           ) : (
             <>
               <button className="mini" onClick={onHint} disabled={status !== 'play' || hintLevel >= 2}
-                aria-label={hintLevel === 0 ? 'Hint: highlight the piece to move' : 'Hint: show the move'}>
-                {hintLevel === 0 ? 'Hint' : 'Show move'}
+                aria-label={hintLevel === 0 ? t('puzzles.hintPieceAria') : t('puzzles.hintMoveAria')}>
+                {hintLevel === 0 ? t('puzzles.hint') : t('puzzles.showMove')}
               </button>
-              <button className="mini" onClick={onShowSolution} disabled={status === 'revealed'} aria-label="Show the solution">Show solution</button>
+              <button className="mini" onClick={onShowSolution} disabled={status === 'revealed'} aria-label={t('puzzles.showSolutionAria')}>{t('puzzles.showSolution')}</button>
             </>
           )}
         </div>
 
-        <div className="pz-history" aria-label="Last 10 results">
-          {store.history.length === 0 && <span className="pz-meta">No puzzles yet</span>}
+        <div className="pz-history" aria-label={t('puzzles.last10')}>
+          {store.history.length === 0 && <span className="pz-meta">{t('puzzles.none')}</span>}
           {store.history.map((h, i) => (
-            <span key={i} className={h.won ? 'win' : 'loss'} title={`Puzzle ${h.id}`} aria-label={h.won ? 'solved' : 'missed'}>{h.won ? '✓' : '✗'}</span>
+            <span key={i} className={h.won ? 'win' : 'loss'} title={t('puzzles.puzzleId', { id: h.id })} aria-label={h.won ? t('puzzles.solvedShort') : t('puzzles.missed')}>{h.won ? '✓' : '✗'}</span>
           ))}
         </div>
 
         <p className="sr-only" aria-live="polite">{announce}</p>
-        <p className="pz-credit">Puzzles from the Lichess database (CC0).</p>
+        <p className="pz-credit">{t('puzzles.credit')}</p>
       </aside>
     </div>
   );

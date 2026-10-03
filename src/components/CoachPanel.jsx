@@ -3,10 +3,12 @@ import { askCoach } from '../api.js';
 import {
   subscribeCoachChat, getCoachChat, patchCoachChat, patchCoachMessages, resetCoachChat,
 } from '../coachChat.js';
+import { useT } from '../i18n.js';
 
 let streamIdCounter = 0;
 
 function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
+  const t = useT();
   const { messages, input, busy, live, model } = useSyncExternalStore(subscribeCoachChat, getCoachChat);
   const scrollRef = useRef(null);
   const [copied, setCopied] = useState(false);
@@ -43,12 +45,12 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
           yourColor: game.humanColor,
         } : undefined,
         stream: true,
-        onToken: (t) => {
+        onToken: (tok) => {
           if (!streaming) {
             streaming = true;
-            patchCoachMessages((ms) => [...ms, { role: 'coach', text: t, streamId: sid, streaming: true }]);
+            patchCoachMessages((ms) => [...ms, { role: 'coach', text: tok, streamId: sid, streaming: true }]);
           } else {
-            patchCoachMessages((ms) => ms.map((m) => (m.streamId === sid ? { ...m, text: t } : m)));
+            patchCoachMessages((ms) => ms.map((m) => (m.streamId === sid ? { ...m, text: tok } : m)));
           }
         },
       });
@@ -61,7 +63,7 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
           ? { ...m, text: (reply || '').trim() ? reply : m.text, streaming: false, dropped: Boolean(dropped) }
           : m)));
       } else {
-        patchCoachMessages((ms) => [...ms, { role: 'coach', text: reply || `Coach error: ${error || 'unknown'}` }]);
+        patchCoachMessages((ms) => [...ms, { role: 'coach', text: reply || t('coach.error', { error: error || t('coach.unknown') }) }]);
       }
     } finally {
       patchCoachChat({ busy: false });
@@ -73,7 +75,7 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
   async function exportChat() {
     const text = messages
       .filter((m) => !m.streaming && m.text)
-      .map((m) => `${m.role === 'user' ? 'You' : 'Maestro'}: ${m.text}`)
+      .map((m) => `${m.role === 'user' ? t('coach.you') : 'Maestro'}: ${m.text}`)
       .join('\n');
     try {
       await navigator.clipboard.writeText(text);
@@ -82,35 +84,35 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
     } catch { /* clipboard unavailable — leave the button inert */ }
   }
 
-  const quick = ['What should I do here?', 'Was my last move good?', "What's the plan?", 'Quiz me on this position'];
+  const quick = [t('coach.quickWhat'), t('coach.quickLastMove'), t('coach.quickPlan'), t('coach.quickQuiz')];
 
   return (
     <section className="coach">
       <header className={`coach-head${onHeaderPointerDown ? ' draggable' : ''}`} onPointerDown={onHeaderPointerDown}>
-        <h2>Coach</h2>
+        <h2>{t('coach.title')}</h2>
         {live === 'live' && model && <span className="badge live">AI · {model}</span>}
-        {live === 'offline' && <span className="badge offline">offline · stockfish 16</span>}
+        {live === 'offline' && <span className="badge offline">{t('coach.offlineBadge')}</span>}
         <button
           type="button"
           className="coach-clear-btn"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={exportChat}
-          aria-label="Copy conversation"
-          title={copied ? 'Copied' : 'Copy conversation'}
+          aria-label={t('coach.copy')}
+          title={copied ? t('coach.copied') : t('coach.copy')}
           disabled={busy}
         >
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
             <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M12 3v12m0 0l-4-4m4 4l4-4M5 21h14" />
           </svg>
-          {copied && <span className="copied-tip">Copied</span>}
+          {copied && <span className="copied-tip">{t('coach.copied')}</span>}
         </button>
         <button
           type="button"
           className="coach-clear-btn"
           onPointerDown={(e) => e.stopPropagation()}
           onClick={resetCoachChat}
-          aria-label="Clear chat"
-          title="Clear chat"
+          aria-label={t('coach.clear')}
+          title={t('coach.clear')}
           disabled={busy}
         >
           <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true">
@@ -123,8 +125,8 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
             className="coach-collapse-btn"
             onPointerDown={(e) => e.stopPropagation()}
             onClick={onCollapse}
-            aria-label="Collapse coach"
-            title="Collapse"
+            aria-label={t('coach.collapseAria')}
+            title={t('coach.collapse')}
           >
             <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               <path fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" d="M15 6l-6 6 6 6" />
@@ -140,17 +142,17 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
             ) : (
               <>
                 {m.text}
-                {m.dropped && <span className="stream-dropped"> (connection dropped)</span>}
+                {m.dropped && <span className="stream-dropped"> {t('coach.dropped')}</span>}
               </>
             )}
           </div>
         ))}
         {busy && !hasStreamingMsg && (
-          <div className="msg coach thinking" aria-label="Coach is thinking">
+          <div className="msg coach thinking" aria-label={t('coach.thinkingAria')}>
             <span className="typing-dots" aria-hidden="true">
               <span /><span /><span />
             </span>
-            <span className="thinking-label">Maestro is thinking…</span>
+            <span className="thinking-label">{t('coach.thinking')}</span>
           </div>
         )}
       </div>
@@ -163,10 +165,10 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
         <input
           value={input}
           onChange={(e) => patchCoachChat({ input: e.target.value })}
-          placeholder={disabled ? 'Start a game to give me context…' : 'Ask your coach anything…'}
+          placeholder={disabled ? t('coach.placeholderDisabled') : t('coach.placeholder')}
           disabled={busy || disabled}
         />
-        <button type="submit" disabled={busy || disabled || !input.trim()}>Send</button>
+        <button type="submit" disabled={busy || disabled || !input.trim()}>{t('coach.send')}</button>
       </form>
     </section>
   );
