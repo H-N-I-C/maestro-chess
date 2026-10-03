@@ -8,6 +8,7 @@ Learn chess properly: staged lessons, honest engine difficulty, and an AI coach 
 - **Stockfish 16 (NNUE)** — 6 difficulty levels from Novice (~400) to Maestro (near-max strength), honest Elo limits via UCI, plus a custom Elo slider (400–2800).
 - **Multithreaded engine** — the pthreads WASM build runs on up to 8 threads (3–4× faster); single-thread fallback when cross-origin isolation isn't available.
 - **Game clocks** — 3|2, 5, 5|3, 10, 10|5 and 15|10 time controls with increments, measured in real elapsed time (a background tab can't freeze your clock); flagging loses on time.
+- **Chess960 (Fischer Random)** — pick the variant for games vs Maestro, watched games and online games: one of the 960 start positions at random, proper 960 castling (click the king's destination or the rook), PGN export with `Variant`/`FEN` headers, review and import of 960 games. The rules layer (`src/chess960.js`) is verified by perft node counts, including published Chess960 test positions.
 - **Premoves** — queue your next move while the opponent (engine or online) is thinking; it plays instantly if still legal.
 - **Resign / offer draw** vs the engine (it accepts when its own eval is bad enough), with correct draw detection: threefold repetition (full move history is kept, also across reloads), 50-move rule, stalemate, insufficient material.
 - **Hint button** — shows the engine's best move on the board (always at full engine strength, whatever the difficulty).
@@ -46,6 +47,7 @@ Learn chess properly: staged lessons, honest engine difficulty, and an AI coach 
 - **Observe mode** — watch Maestro play itself with pause/speed/rewind controls and live coach commentary.
 - **PWA** — installable on your phone (Add to Home Screen), works offline after first load.
 - **Responsive** — phone (bottom tab bar, move strip, draggable coach bubble, haptic ticks on Android), tablet, desktop.
+- **English and Spanish** — language picker in the top bar (defaults to the browser language): all screens, lessons, opening ideas, puzzle themes and the offline coach are translated; moves are shown with the language's piece letters (PGN export stays international).
 - **Accessible** — keyboard play, spoken move announcements ("knight takes e5, check") for screen readers, visible focus rings.
 
 ## Play a friend online
@@ -113,6 +115,9 @@ server/index.mjs        Express: static hosting + /api/coach (LLM proxy, streami
 public/vendor/          Stockfish 16 NNUE (single + multithreaded wasm, NNUE net)
 src/engine.js           UCI wrapper, difficulty table, custom Elo helper
 src/gameUtils.js        History-preserving move helpers, draw reasons, history validation
+src/chess960.js         Chess960 rules on top of chess.js (castling, Shredder-FEN, repetition, PGN)
+src/i18n.js, src/locales/  UI strings (en, es) and translated teaching content
+src/storageGuard.js     In-memory fallback when the browser blocks localStorage
 src/hooks/useClocks.js  Real-time clocks with increments
 src/review.js           Post-game review (win%, accuracy, move classification)
 src/library.js          Saved games, PGN import, rating estimate
