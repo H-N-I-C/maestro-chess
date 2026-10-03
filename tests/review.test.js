@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { winPercent, moveAccuracy, classify, positionsOf, buildReview, runReview, evalLabel, keyMoments } from '../src/review.js';
+import { winPercent, moveAccuracy, classify, positionsOf, runReview, evalLabel, keyMoments } from '../src/review.js';
 
 describe('review math', () => {
   it('win% is symmetric and saturates', () => {

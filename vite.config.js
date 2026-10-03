@@ -11,4 +11,5 @@ export default defineConfig({
     proxy: { '/api': 'http://localhost:8080' },
   },
   build: { chunkSizeWarningLimit: 1200 },
+  test: { exclude: ['**/node_modules/**', '**/.claude/**', '**/dist/**'] },
 });
