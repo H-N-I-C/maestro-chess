@@ -14,15 +14,14 @@ const MANIFEST_URL = 'precache-manifest.json';
 self.addEventListener('install', (event) => {
   event.waitUntil(
     (async () => {
+      // a failed precache fails the install: the previous worker and its
+      // complete cache stay in charge, so offline support is never lost
       const cache = await caches.open(CACHE);
-      try {
-        const res = await fetch(MANIFEST_URL, { cache: 'no-store' });
-        const files = await res.json();
-        await cache.addAll(files);
-      } catch {
-        // best effort — runtime caching below still fills the cache as pages are visited
-      }
-      await self.skipWaiting();
+      const res = await fetch(MANIFEST_URL, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`precache manifest ${res.status}`);
+      await cache.addAll(await res.json());
+      // no skipWaiting here: an update waits until the user accepts the
+      // "new version" toast, so an open tab never loses its old chunks mid-session
     })()
   );
 });

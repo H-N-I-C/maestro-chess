@@ -27,6 +27,7 @@ function loadStore() {
         srs: s.srs && typeof s.srs === 'object' ? s.srs : {},
         seen: Array.isArray(s.seen) ? s.seen.slice(-SEEN_LIMIT) : [],
         theme: THEME_FILTERS.some((f) => f.id === s.theme) ? s.theme : 'all',
+        inProgress: typeof s.inProgress === 'string' ? s.inProgress : null,
       };
     }
   } catch { /* ignore */ }
@@ -62,6 +63,9 @@ export default function Puzzles() {
   const timers = useRef([]);
   const storeRef = useRef(store);
   storeRef.current = store;
+  // last position with no animation pending: Show solution replays from here
+  const settledRef = useRef({ fen: null, ply: 0 });
+  const abandonRef = useRef(null); // charges a loss for a rated puzzle left unfinished
 
   const later = useCallback((fn, ms) => { timers.current.push(setTimeout(fn, ms)); }, []);
   const clearTimers = useCallback(() => { timers.current.forEach(clearTimeout); timers.current = []; }, []);
@@ -92,6 +96,7 @@ export default function Puzzles() {
     clearTimers();
     setPuzzle(p);
     setFen(p.fen);
+    settledRef.current = { fen: p.fen, ply: 0 };
     setPly(0);
     setLastMove(null);
     setResult(null);
@@ -106,6 +111,9 @@ export default function Puzzles() {
       setFen(f);
       setLastMove({ from: move.from, to: move.to });
       setPly(1);
+      settledRef.current = { fen: f, ply: 1 };
+      // remembered so leaving mid-puzzle (tab switch, reload) still costs rating
+      update({ inProgress: p.id });
       setStatus('play');
       setAnnounce(t(solverColor(p) === 'w' ? 'puzzles.yourTurnWhite' : 'puzzles.yourTurnBlack'));
     }, 600);
@@ -113,6 +121,7 @@ export default function Puzzles() {
 
   const next = useCallback((forceMode) => {
     if (!puzzles?.length) return;
+    abandonRef.current?.();
     const s = storeRef.current;
     const m = forceMode || mode;
     if (m === 'review') {
@@ -123,10 +132,25 @@ export default function Puzzles() {
     if (p) start(p);
   }, [puzzles, mode, byId, puzzle, start]);
 
-  // first puzzle once the data arrives
+  // first puzzle once the data arrives — a rated puzzle abandoned last time
+  // (tab switch or reload mid-attempt) counts as a loss first
   useEffect(() => {
-    if (puzzles && !puzzle) next();
-  }, [puzzles, puzzle, next]);
+    if (!puzzles || puzzle) return;
+    const left = storeRef.current.inProgress && byId.get(storeRef.current.inProgress);
+    if (left) {
+      update((s) => {
+        // a review puzzle only reschedules; a new rated one also costs rating
+        const reviewing = Boolean(s.srs[left.id]);
+        const r = reviewing ? { rating: s.rating } : updateRating(s.rating, left.rating, false, s.games);
+        return {
+          rating: r.rating, games: reviewing ? s.games : s.games + 1, streak: 0, inProgress: null,
+          history: [...s.history, { id: left.id, won: false }].slice(-10),
+          srs: { ...s.srs, [left.id]: scheduleReview(s.srs[left.id], false) },
+        };
+      });
+    }
+    next();
+  }, [puzzles, puzzle, next, byId, update]);
 
   /** Records the outcome of the first attempt (once per puzzle). */
   function record(won) {
@@ -140,6 +164,7 @@ export default function Puzzles() {
       const srs = { ...s.srs };
       if (!won || srs[p.id]) srs[p.id] = scheduleReview(srs[p.id], won);
       return {
+        inProgress: null,
         rating: r.rating,
         games: reviewing ? s.games : s.games + 1,
         streak: won ? s.streak + 1 : 0,
@@ -176,6 +201,7 @@ export default function Puzzles() {
       setAnnounce(t('puzzles.wrongMove', { san: played.move.san }) + (r && r.delta ? ' ' + t('puzzles.ratingChange', { delta: r.delta }) : ''));
       const before = fen, prevLast = lastMove;
       later(() => {
+        settledRef.current = { fen: before, ply };
         setFen(before);
         setLastMove(prevLast);
         setWrong(null);
@@ -195,6 +221,7 @@ export default function Puzzles() {
       setFen(reply.fen);
       setLastMove({ from: reply.move.from, to: reply.move.to });
       setPly(nextPly + 1);
+      settledRef.current = { fen: reply.fen, ply: nextPly + 1 };
       setStatus('play');
     }, REPLY_DELAY);
   }
@@ -213,12 +240,15 @@ export default function Puzzles() {
     setWrong(null);
     setHintLevel(0);
     setAnnounce(t('puzzles.showingSolution'));
-    // play the remaining line from the current position, one move at a time
-    let f = fen, i = ply;
-    if (i === 0) { f = puzzle.fen; } // opponent's first move had not been played yet
+    // replay the rest of the line from the last settled position — never from
+    // a mid-animation one (pending reply or wrong-move takeback)
+    let { fen: f, ply: i } = settledRef.current;
+    setFen(f);
     const step = () => {
       if (i >= puzzle.moves.length) { setStatus('solved'); setAnnounce(t('puzzles.solutionShown')); return; }
-      const { fen: nf, move } = applyUci(f, puzzle.moves[i]);
+      let res;
+      try { res = applyUci(f, puzzle.moves[i]); } catch { setStatus('solved'); return; }
+      const { fen: nf, move } = res;
       playMoveSound({ capture: Boolean(move.captured) });
       f = nf; i += 1;
       setFen(nf);
@@ -239,6 +269,10 @@ export default function Puzzles() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [status, next]);
+
+  abandonRef.current = () => {
+    if (puzzle && !result && ply >= 1 && (status === 'play' || status === 'opponent')) record(false);
+  };
 
   if (loadError) return <p className="loading-pane">{t('puzzles.loadError')}</p>;
   if (!puzzles || !puzzle) return <p className="loading-pane">{t('puzzles.loading')}</p>;

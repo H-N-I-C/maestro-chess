@@ -55,3 +55,24 @@ describe('coach proxy security', () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 });
+
+describe('upstream fetch hardening', () => {
+  it('does not follow redirects to internal addresses', async () => {
+    const http = await import('node:http');
+    const srv = http.createServer((req, res) => { res.writeHead(302, { Location: 'http://127.0.0.1:1/secret' }); res.end(); });
+    await new Promise((r) => srv.listen(0, r));
+    process.env.COACH_ALLOW_PRIVATE_HOSTS = '1'; // let the test reach its local redirector
+    try {
+      await expect(mod.upstreamFetch(`http://127.0.0.1:${srv.address().port}/v1/models`)).rejects.toThrow(/redirect/);
+    } finally {
+      delete process.env.COACH_ALLOW_PRIVATE_HOSTS;
+      srv.close();
+    }
+  });
+
+  it('blocks private addresses at connect time (DNS rebinding)', async () => {
+    // localhost resolves to a loopback address: the guarded lookup must refuse it
+    const err = await mod.upstreamFetch('http://localhost:65000/v1/models').catch((e) => e);
+    expect(String(err?.cause?.message || err?.message)).toMatch(/blocked private address/);
+  });
+});

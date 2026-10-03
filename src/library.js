@@ -53,19 +53,67 @@ export function saveGame(entry) {
   return game;
 }
 
+/**
+ * Patch a saved game. When storage is full, older games' cached reviews are
+ * dropped (they can be recomputed) and then the oldest games, until it fits.
+ * Returns the updated game, or null if it couldn't be stored.
+ */
 export function updateGame(id, patch) {
-  const games = listGames();
+  let games = listGames();
   const i = games.findIndex((g) => g.id === id);
   if (i < 0) return null;
   games[i] = { ...games[i], ...patch };
-  write(LIBRARY_KEY, games);
+  let ok = write(LIBRARY_KEY, games);
+  for (let k = games.length - 1; !ok && k >= 0; k--) {
+    if (games[k].id === id || !games[k].review) continue;
+    const { review: _r, coachSummary: _c, ...rest } = games[k];
+    games[k] = rest;
+    ok = write(LIBRARY_KEY, games);
+  }
+  while (!ok && games.length > 1) {
+    const oldest = games.map((g) => g.id).reverse().find((gid) => gid !== id);
+    games = games.filter((g) => g.id !== oldest);
+    ok = write(LIBRARY_KEY, games);
+  }
   notify();
-  return games[i];
+  return ok ? games.find((g) => g.id === id) : null;
 }
 
 export function deleteGame(id) {
-  write(LIBRARY_KEY, listGames().filter((g) => g.id !== id));
+  const ok = write(LIBRARY_KEY, listGames().filter((g) => g.id !== id));
   notify();
+  return ok;
+}
+
+/**
+ * Split a PGN file into single games: a new game starts at a tag line after a
+ * blank line (any tag, not just [Event]), or at movetext that follows a
+ * finished game's result token.
+ */
+export function splitPgn(text) {
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const games = [];
+  let cur = [];
+  let inMoves = false; // current game has reached its movetext
+  let ended = false; // current game's movetext ended with a result token
+  const flush = () => {
+    const g = cur.join('\n').trim();
+    if (g) games.push(g);
+    cur = []; inMoves = false; ended = false;
+  };
+  for (const line of lines) {
+    const t = line.trim();
+    const isTag = /^\[[A-Za-z0-9_]+\s+"/.test(t);
+    if (isTag && inMoves) flush();
+    else if (t && !isTag && ended) flush();
+    if (t && !isTag) {
+      inMoves = true;
+      if (/(?:^|\s)(1-0|0-1|1\/2-1\/2|\*)\s*$/.test(t)) ended = true;
+    }
+    cur.push(line);
+  }
+  flush();
+  return games;
 }
 
 /**
@@ -73,11 +121,7 @@ export function deleteGame(id) {
  * {added: n, errors: n}. Each game is validated by replaying it.
  */
 export function importPgn(text) {
-  const chunks = String(text || '')
-    .replace(/\r\n?/g, '\n')
-    .split(/\n\s*\n(?=\[Event )/)
-    .map((c) => c.trim())
-    .filter(Boolean);
+  const chunks = splitPgn(text);
   let added = 0, errors = 0;
   for (const chunk of chunks.slice(0, 200)) {
     const g = new Chess();

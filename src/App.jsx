@@ -49,7 +49,12 @@ export default function App() {
   function go(id, arg = null) {
     window.location.hash = arg ? `/${id}/${arg}` : `/${id}`;
   }
-  const [theme, setTheme] = useState(() => localStorage.getItem('maestro-theme') || 'walnut');
+  const [theme, setTheme] = useState(() => {
+    // storage can throw (blocked site data); an unknown value falls back too
+    let v = null;
+    try { v = localStorage.getItem('maestro-theme'); } catch { /* blocked */ }
+    return THEMES.some((t) => t.id === v) ? v : 'walnut';
+  });
   const [soundMuted, setSoundMutedState] = useState(() => {
     try { return localStorage.getItem(SOUND_KEY) === 'true'; } catch { return false; }
   });
@@ -61,7 +66,7 @@ export default function App() {
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    localStorage.setItem('maestro-theme', theme);
+    try { localStorage.setItem('maestro-theme', theme); } catch { /* blocked */ }
   }, [theme]);
 
   return (

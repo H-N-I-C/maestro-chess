@@ -1,7 +1,8 @@
 import express from 'express';
 import path from 'node:path';
 import fs from 'node:fs';
-import { Readable } from 'node:stream';
+import { Readable, pipeline } from 'node:stream';
+import { Agent, fetch as undiciFetch } from 'undici';
 import { fileURLToPath } from 'node:url';
 import dns from 'node:dns/promises';
 import net from 'node:net';
@@ -73,6 +74,35 @@ export function isPrivateAddress(ip) {
   return true;
 }
 
+/* DNS-rebinding guard: the address is re-checked at connect time, so a host
+   that resolved public during isAllowedUpstream can't switch to a private IP
+   for the real request. */
+function safeLookup(hostname, options, callback) {
+  dns.lookup(hostname, { ...options, all: true }).then((addrs) => {
+    if (!addrs.length || addrs.some((a) => isPrivateAddress(a.address))) {
+      callback(Object.assign(new Error(`blocked private address for ${hostname}`), { code: 'EPRIVATE' }));
+      return;
+    }
+    if (options?.all) callback(null, addrs);
+    else callback(null, addrs[0].address, addrs[0].family);
+  }, (err) => callback(err));
+}
+const guardedAgent = new Agent({ connect: { lookup: safeLookup } });
+
+/** fetch to an LLM upstream: never follows redirects (a 30x could point at an
+    internal address), and pins DNS checks to the actual connection. */
+export async function upstreamFetch(url, opts = {}) {
+  const res = await undiciFetch(url, {
+    ...opts,
+    redirect: 'manual',
+    ...(process.env.COACH_ALLOW_PRIVATE_HOSTS === '1' ? {} : { dispatcher: guardedAgent }),
+  });
+  if (res.status >= 300 && res.status < 400) {
+    throw new Error(`upstream redirected (${res.status}) — redirects are not followed`);
+  }
+  return res;
+}
+
 async function isAllowedUpstream(base) {
   if (!isValidBaseUrl(base)) return false;
   if (process.env.COACH_ALLOW_PRIVATE_HOSTS === '1') return true;
@@ -139,9 +169,12 @@ app.post('/api/coach/models', async (req, res) => {
   if (!(await isAllowedUpstream(base))) {
     return res.status(200).json({ ok: false, error: 'invalid or disallowed base URL' });
   }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15_000);
   try {
-    const upstream = await fetch(`${base}/models`, {
+    const upstream = await upstreamFetch(`${base}/models`, {
       headers: { Authorization: `Bearer ${key}` },
+      signal: controller.signal,
     });
     const text = await upstream.text();
     if (!upstream.ok) {
@@ -154,7 +187,9 @@ app.post('/api/coach/models', async (req, res) => {
       .sort();
     res.json({ ok: true, models });
   } catch (err) {
-    res.status(200).json({ ok: false, error: String(err) });
+    res.status(200).json({ ok: false, error: err?.name === 'AbortError' ? 'request timed out' : String(err?.message || err) });
+  } finally {
+    clearTimeout(timer);
   }
 });
 
@@ -230,7 +265,7 @@ app.post('/api/coach', async (req, res) => {
     const upstreamTimeout = setTimeout(() => controller.abort(), 60_000);
     let upstream;
     try {
-      upstream = await fetch(anthropic ? `${base}/messages` : `${base}/chat/completions`, {
+      upstream = await upstreamFetch(anthropic ? `${base}/messages` : `${base}/chat/completions`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: anthropic ? buildAnthropicBody(model, convo, game, effort) : buildOpenaiBody(model, convo, game, effort),
@@ -250,8 +285,11 @@ app.post('/api/coach', async (req, res) => {
         'Cache-Control': 'no-cache',
         Connection: 'keep-alive',
       });
-      Readable.fromWeb(upstream.body).pipe(res);
-      res.on('close', () => { try { upstream.body.cancel(); } catch { /* ignore */ } });
+      // pipeline handles upstream errors (no uncaught 'error' crashing the
+      // server) and tears the upstream down when the client disconnects
+      const src = Readable.fromWeb(upstream.body);
+      pipeline(src, res, () => {});
+      res.on('close', () => src.destroy());
       return;
     }
     const data = await upstream.json();

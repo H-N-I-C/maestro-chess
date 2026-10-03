@@ -162,15 +162,21 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   const [pendingOffer, setPendingOffer] = useState(null); // {kind:'draw'|'takeback'} we received
   const [rejoin, setRejoin] = useState(savedOnline?.code ? savedOnline : null); // restorable online game
   const [results, setResults] = useState(loadResults);
-  const resultRecorded = useRef(false);
-  const [savedGameId, setSavedGameId] = useState(null); // library id of the last finished game
+  // saves from before this flag existed: a finished position was already counted
+  const resultRecorded = useRef(Boolean(saved?.recorded) || (() => {
+    try { return Boolean(saved?.fen) && new Chess(saved.fen).isGameOver(); } catch { return false; }
+  })());
+  const [savedGameId, setSavedGameId] = useState(() => (saved?.recorded && saved.savedGameId) || null); // library id of the last finished game
   const [ratingChange, setRatingChange] = useState(null); // {rating, delta} after a rated game
   const onlineRef = useRef(null); // { peer, conn, role, prevColor }
   const [spectators, setSpectators] = useState(0); // watchers connected to our hosted game
+  const peerFns = useRef(null); // latest peer handler implementations (see hostHandlers)
   const myOfferRef = useRef(null); // 'draw'|'takeback'|'newgame' we sent and await an answer to
 
-  const [timeOver, setTimeOver] = useState(null); // 'w' | 'b' flagged side (vs engine)
-  const [manualResult, setManualResult] = useState(null); // {outcome, title, detail}
+  // finished-game state is saved too, so a reload neither revives nor re-records a game
+  const resumable = saved && !saved.online;
+  const [timeOver, setTimeOver] = useState(() => (resumable && (saved.timeOver === 'w' || saved.timeOver === 'b') ? saved.timeOver : null)); // flagged side (vs engine)
+  const [manualResult, setManualResult] = useState(() => (resumable && saved.manualResult?.outcome ? saved.manualResult : null)); // {outcome, title, detail}
 
   // ---- game clocks (vs engine, and host-authoritative online) ----
   const [clockId, setClockId] = useState(() => migrateTimeControl(saved));
@@ -304,6 +310,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
       mode: mode === 'online' ? 'play' : mode,
       online: mode === 'online', // never resume an online game as an engine game
       clockId, clocks: clk.snapshot(), savedAt: Date.now(),
+      manualResult, timeOver, recorded: resultRecorded.current, savedGameId,
     }));
     if (mode === 'online' && online.code) {
       localStorage.setItem(ONLINE_SAVE_KEY, JSON.stringify({
@@ -311,7 +318,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
         fen: game.fen(), history, captured, lastMove,
       }));
     }
-  }, [game, lastMove, color, difficulty, history, captured, mode, online, clockId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [game, lastMove, color, difficulty, history, captured, mode, online, clockId, manualResult, timeOver, savedGameId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     try { localStorage.setItem(PIECE_SET_KEY, pieceSet); } catch { /* ignore */ }
@@ -534,11 +541,27 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     setOnline({ status: 'idle', code: '', role: null, error: '' });
   }
 
-  /** Peer handlers for the host. They read live state through liveRef, so a
-      reconnecting guest is synced to the CURRENT position, not a stale one. */
+  /** Peer handlers outlive the render that created them, so they only ever
+      delegate to peerFns.current — refreshed every render — and never run a
+      stale closure (stale mode/online/onlineOver/game). */
   function hostHandlers() {
     return {
-      onConnected: (conn) => {
+      onConnected: (conn) => peerFns.current.hostConnected(conn),
+      onData: (d, conn) => peerFns.current.hostData(d, conn),
+      onClose: (conn) => peerFns.current.hostClosed(conn),
+      onError: (e) => peerFns.current.peerError(e),
+    };
+  }
+  function guestHandlers() {
+    return {
+      onConnected: (conn) => peerFns.current.guestConnected(conn),
+      onData: (d) => peerFns.current.guestData(d),
+      onClose: () => setOppGone(true),
+      onError: (e) => peerFns.current.peerError(e),
+    };
+  }
+
+  function hostConnected(conn) {
         const cur = onlineRef.current;
         if (!cur) { conn.close(); return; }
         if (conn.metadata?.role === 'spectator') {
@@ -565,23 +588,30 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
         } else {
           beginOnlineGame('host');
         }
-      },
-      onData: (d, conn) => {
-        // only the seated opponent can move, chat or make offers
-        if (conn && conn !== onlineRef.current?.conn) return;
-        onlineHostData(d);
-      },
-      onClose: (conn) => {
-        const cur = onlineRef.current;
-        if (cur && conn && conn !== cur.conn) {
-          cur.spectators = (cur.spectators || []).filter((c) => c !== conn && c.open);
-          setSpectators(cur.spectators.length);
-          return;
-        }
-        setOppGone(true);
-      },
-      onError: (e) => setOnline((o) => ({ ...o, status: o.status === 'playing' ? o.status : 'error', error: onlineErrorText(e) })),
-    };
+  }
+  function hostData(d, conn) {
+    // only the seated opponent can move, chat or make offers
+    if (conn && conn !== onlineRef.current?.conn) return;
+    onlineHostData(d);
+  }
+  function hostClosed(conn) {
+    const cur = onlineRef.current;
+    if (cur && conn && conn !== cur.conn) {
+      cur.spectators = (cur.spectators || []).filter((c) => c !== conn && c.open);
+      setSpectators(cur.spectators.length);
+      return;
+    }
+    setOppGone(true);
+  }
+  function peerError(e) {
+    setOnline((o) => ({ ...o, status: o.status === 'playing' ? o.status : 'error', error: onlineErrorText(e) }));
+  }
+  function guestConnected(conn) {
+    onlineRef.current.conn = conn;
+    setOppGone(false);
+    // a rejoining guest keeps its board until the host's sync arrives
+    if (liveRef.current.mode !== 'online') beginOnlineGame('guest');
+    conn.send({ t: 'sync' });
   }
 
   function onlineCreate() {
@@ -594,17 +624,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   function onlineJoin(codeArg) {
     const code = (codeArg ?? joinCode).trim().toLowerCase();
     if (!code) return;
-    const peer = joinGame(code, {
-      onConnected: (conn) => {
-        onlineRef.current.conn = conn;
-        setOppGone(false);
-        beginOnlineGame('guest');
-        conn.send({ t: 'sync' });
-      },
-      onData: onlineGuestData,
-      onClose: () => setOppGone(true),
-      onError: (e) => setOnline((o) => ({ ...o, status: o.status === 'playing' ? o.status : 'error', error: onlineErrorText(e) })),
-    });
+    const peer = joinGame(code, guestHandlers());
     onlineRef.current = { ...(onlineRef.current || {}), peer, conn: null, role: 'guest' };
     setOnline({ status: 'connecting', code, role: 'guest', error: '' });
   }
@@ -698,6 +718,9 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     setCaptured(capturedFromHistory(hist));
     setLastMove(lm);
     if (d.clocks) applyRemoteClocks(d.clocks);
+    // a guest that reconnects after the game ended learns the result here
+    const flipped = { 'win-resign': 'lose-resign', 'lose-resign': 'win-resign', 'win-time': 'lose-time', 'lose-time': 'win-time', 'draw-agreed': 'draw-agreed' };
+    if (d.over && flipped[d.over] && !prev.onlineOver) setOnlineOver(flipped[d.over]);
   }
 
   function rebuildFromHistory(hist) {
@@ -712,10 +735,21 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   }
 
   // single-player takeback: undo your last move and the engine's reply
+  /** How many plies a takeback removes so it's the player's move again (0 = none possible). */
+  function takebackPlies() {
+    const len = history?.length || 1;
+    for (let n = 1; n <= 2 && len - n >= 1; n++) {
+      if (history[len - 1 - n].fen.split(' ')[1] === color) return n;
+    }
+    return 0;
+  }
+
+  // single-player takeback: undo your last move (and the engine's reply)
   function singlePlayerTakeback() {
-    if (mode !== 'play' || thinking || (history?.length || 1) < 2) return;
+    if (mode !== 'play' || thinking) return;
     if (game.isGameOver() || manualResult || timeOver) return; // result already recorded
-    const n = history.length >= 3 ? 2 : 1;
+    const n = takebackPlies();
+    if (!n) return; // e.g. as Black before your first move: the engine would be left to move
     clearHint();
     rebuildFromHistory(history.slice(0, history.length - n));
   }
@@ -858,7 +892,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     const next = hist.slice(0, hist.length - n);
     rebuildFromHistory(next);
     const last = next[next.length - 1];
-    liveRef.current = { ...s, history: next, game: gameFromHistory(next) };
+    liveRef.current = { ...s, history: next, game: gameFromHistory(next), captured: capturedFromHistory(next), lastMove: last.lastMove || null };
     hostSync(last.fen, next, capturedFromHistory(next), last.lastMove || null);
   }
 
@@ -996,6 +1030,9 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
       resetOnlineClocks();
       liveRef.current = { ...liveRef.current, game: g, history: hist, captured: { w: [], b: [] }, lastMove: null, onlineOver: null };
       sendPeer({ t: 'newgame', fen: g.fen(), history: hist, clocks: onlineClockSnapshot() });
+      for (const c of onlineRef.current?.spectators || []) {
+        try { if (c.open) c.send({ ...stateMessage(g.fen(), hist, { w: [], b: [] }, null), over: null }); } catch { /* ignore */ }
+      }
     } else if (!myOfferRef.current) {
       myOfferRef.current = 'newgame';
       sendPeer({ t: 'newgame-request' });
@@ -1006,15 +1043,9 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   function guestNewGame(d) {
     if (!isValidHistory(d.history)) return;
     myOfferRef.current = null;
-    setGame(gameFromHistory(d.history));
+    resetBoardState(gameFromHistory(d.history)); // also re-arms result recording
     setHistory(d.history);
     if (d.clocks) applyRemoteClocks(d.clocks);
-    setCaptured({ w: [], b: [] });
-    setLastMove(null);
-    setViewIndex(null);
-    setStatus('');
-    setOnlineOver(null);
-    setPendingOffer(null);
   }
 
   useEffect(() => {
@@ -1091,6 +1122,11 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   function recordResult(outcome) {
     if (resultRecorded.current) return;
     resultRecorded.current = true;
+    // persist the flag right away so a reload can't count this game twice
+    try {
+      const cur = JSON.parse(localStorage.getItem(GAME_SAVE_KEY));
+      if (cur) localStorage.setItem(GAME_SAVE_KEY, JSON.stringify({ ...cur, recorded: true }));
+    } catch { /* ignore */ }
     const online_ = mode === 'online';
     const next = JSON.parse(JSON.stringify(results));
     if (online_) next.online[outcome] += 1;
@@ -1185,6 +1221,8 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
       return n >= history.length - 1 ? null : n;
     });
   }
+
+  peerFns.current = { hostConnected, hostData, hostClosed, peerError, guestConnected, guestData: onlineGuestData };
 
   return (
     <div className="play-layout">
@@ -1509,7 +1547,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
             <button type="button" className="icon-btn" onClick={stepPrev} disabled={!canPrev} aria-label={t('play.prevMove')} title={t('play.prevMove')}>‹</button>
             <button type="button" className="icon-btn" onClick={stepNext} disabled={!canNext} aria-label={t('play.nextMove')} title={t('play.nextMove')}>›</button>
             {mode === 'play' && (
-              <button type="button" className="mini takeback-btn" onClick={singlePlayerTakeback} disabled={thinking || (history?.length || 1) < 2}>{t('play.takeback')}</button>
+              <button type="button" className="mini takeback-btn" onClick={singlePlayerTakeback} disabled={thinking || !takebackPlies() || game.isGameOver() || !!manualResult || !!timeOver}>{t('play.takeback')}</button>
             )}
             {mode === 'play' && (
               <button

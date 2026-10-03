@@ -1,3 +1,4 @@
+import './storageGuard.js'; // must stay first: later modules read localStorage on import
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
@@ -12,12 +13,16 @@ createRoot(document.getElementById('root')).render(
   </React.StrictMode>
 );
 
+let updateAccepted = false;
+
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     // first visit on a host without COOP/COEP headers (GitHub Pages): once the
     // worker controls the page it adds them, so reload once to become
     // cross-origin isolated and unlock the multithreaded engine
     navigator.serviceWorker.addEventListener('controllerchange', () => {
+      // the user accepted an update: reload once the new worker is in control
+      if (updateAccepted) { window.location.reload(); return; }
       if (window.crossOriginIsolated) return;
       try {
         if (sessionStorage.getItem('maestro-coi-reload')) return;
@@ -52,8 +57,10 @@ function showUpdateToast(worker) {
   btn.type = 'button';
   btn.textContent = 'Refresh';
   btn.addEventListener('click', () => {
+    // reload happens on 'controllerchange', once the new worker has taken over
+    updateAccepted = true;
+    btn.disabled = true;
     worker.postMessage?.({ type: 'SKIP_WAITING' });
-    window.location.reload();
   });
   toast.append(msg, btn);
   document.body.appendChild(toast);
