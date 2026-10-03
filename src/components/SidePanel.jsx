@@ -4,19 +4,21 @@ import {
   getCoachConfig, saveCoachConfig, clearCoachConfig,
   getCoachLog, clearCoachLog,
 } from '../coachConfig.js';
+import { useT } from '../i18n.js';
 
 const DEFAULT_BASE = 'https://api.moonshot.cn/v1';
 const DEFAULT_MODEL = 'kimi-k3';
 
 export default function SidePanel({ onClose }) {
+  const t = useT();
   const [tab, setTab] = useState('settings');
   return (
     <aside className="side panel dropdown-panel">
       <div className="side-tabs">
-        <button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>Settings</button>
-        <button className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>Logs</button>
+        <button className={tab === 'settings' ? 'active' : ''} onClick={() => setTab('settings')}>{t('side.settings')}</button>
+        <button className={tab === 'logs' ? 'active' : ''} onClick={() => setTab('logs')}>{t('side.logs')}</button>
         {onClose && (
-          <button type="button" className="side-close" onClick={onClose} aria-label="Close settings">×</button>
+          <button type="button" className="side-close" onClick={onClose} aria-label={t('side.closeSettings')}>×</button>
         )}
       </div>
       {tab === 'settings' ? <Settings /> : <Logs />}
@@ -25,6 +27,7 @@ export default function SidePanel({ onClose }) {
 }
 
 function Settings() {
+  const t = useT();
   const cfg = getCoachConfig();
   const [baseUrl, setBaseUrl] = useState(cfg.baseUrl || '');
   const [apiKey, setApiKey] = useState(cfg.apiKey || '');
@@ -49,19 +52,19 @@ function Settings() {
 
   function save() {
     saveCoachConfig({ baseUrl: baseUrl.trim(), apiKey: apiKey.trim(), model: model.trim(), effort });
-    setTest({ state: 'ok', message: 'Saved. The next coach message uses this configuration.' });
+    setTest({ state: 'ok', message: t('side.saved') });
   }
 
   function reset() {
     clearCoachConfig();
     setBaseUrl(''); setApiKey(''); setModel(''); setEffort('');
     setModels(null);
-    setTest({ state: 'ok', message: 'Cleared — falling back to the server configuration.' });
+    setTest({ state: 'ok', message: t('side.cleared') });
     coachStatus().then(setStatus);
   }
 
   async function testConnection() {
-    setTest({ state: 'testing', message: 'Sending a test message to the coach…' });
+    setTest({ state: 'testing', message: t('side.testing') });
     try {
       const res = await fetch('/api/coach', {
         method: 'POST',
@@ -73,14 +76,14 @@ function Settings() {
       });
       const data = await res.json();
       if (data.ok) {
-        setTest({ state: 'ok', message: `Connected — ${data.model} replied: "${(data.reply || '').slice(0, 60)}"` });
+        setTest({ state: 'ok', message: t('side.connected', { model: data.model, reply: (data.reply || '').slice(0, 60) }) });
       } else if (data.offline) {
-        setTest({ state: 'err', message: 'No API key. The offline engine coach would be used instead.' });
+        setTest({ state: 'err', message: t('side.noKey') });
       } else {
-        setTest({ state: 'err', message: 'Failed: ' + (data.error || 'unknown error') });
+        setTest({ state: 'err', message: t('side.failed', { error: data.error || t('side.unknownError') }) });
       }
     } catch (err) {
-      setTest({ state: 'err', message: 'Failed: ' + String(err) });
+      setTest({ state: 'err', message: t('side.failed', { error: String(err) }) });
     }
   }
 
@@ -97,12 +100,12 @@ function Settings() {
       const data = await res.json();
       if (data.ok && data.models?.length) {
         setModels(data.models);
-        setTest({ state: 'ok', message: `Fetched ${data.models.length} models — pick one from the dropdown.` });
+        setTest({ state: 'ok', message: t('side.fetchedModels', { count: data.models.length }) });
       } else {
-        setTest({ state: 'err', message: 'Failed to fetch models: ' + (data.error || 'none returned') });
+        setTest({ state: 'err', message: t('side.fetchModelsFailed', { error: data.error || t('side.noneReturned') }) });
       }
     } catch (err) {
-      setTest({ state: 'err', message: 'Failed to fetch models: ' + String(err) });
+      setTest({ state: 'err', message: t('side.fetchModelsFailed', { error: String(err) }) });
     } finally {
       setFetchingModels(false);
     }
@@ -110,58 +113,55 @@ function Settings() {
 
   return (
     <div className="side-body">
-      <h3>Coach configuration</h3>
+      <h3>{t('side.coachConfig')}</h3>
       <div className={`coach-status ${effective.live ? 'live' : 'offline'}`}>
         <span className="dot" />
         {effective.live
-          ? <>Live AI coach · <strong>{effective.model}</strong></>
-          : <>Offline engine coach (Stockfish 16, local)</>}
+          ? <>{t('side.liveCoach')} · <strong>{effective.model}</strong></>
+          : <>{t('side.offlineCoach')}</>}
       </div>
       {status?.serverless && (
         <p className="side-note warn">
-          No Maestro server is reachable (this copy is served as static files, e.g. GitHub Pages).
-          The live AI coach needs the self-hosted server — the offline Stockfish coach is active.
+          {t('side.serverless')}
         </p>
       )}
       <p className="side-note">
-        Any OpenAI-compatible API works. Values are stored in this browser only; if left blank,
-        the server's environment variables apply. The server's own key is only used with the
-        server's own base URL — a custom base URL needs your own key.
+        {t('side.apiNote')}
       </p>
       <label>
-        Base URL
+        {t('side.baseUrl')}
         <input value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder={DEFAULT_BASE} autoComplete="off" />
       </label>
       <p className="side-note">
-        Kimi Coding plan key (<code>sk-kimi-…</code>)? Use <code>https://api.kimi.com/coding/v1</code>{' '}
-        with model <code>kimi-for-coding</code> —{' '}
+        {t('side.kimiKey')} (<code>sk-kimi-…</code>)? {t('side.kimiUse')} <code>https://api.kimi.com/coding/v1</code>{' '}
+        {t('side.kimiWithModel')} <code>kimi-for-coding</code> —{' '}
         <button
           type="button"
           className="linklike"
           onClick={() => { setBaseUrl('https://api.kimi.com/coding/v1'); setModel('kimi-for-coding'); }}
         >
-          fill in for me
+          {t('side.fillIn')}
         </button>
       </p>
       <label>
-        API key
+        {t('side.apiKey')}
         <span className="key-row">
           <input
             type={showKey ? 'text' : 'password'}
             value={apiKey}
             onChange={(e) => setApiKey(e.target.value)}
-            placeholder={status?.envConfigured ? '(set on server — leave blank)' : 'sk-…'}
+            placeholder={status?.envConfigured ? t('side.keyOnServer') : 'sk-…'}
             autoComplete="off"
           />
-          <button className="mini" onClick={() => setShowKey((v) => !v)}>{showKey ? 'Hide' : 'Show'}</button>
+          <button className="mini" onClick={() => setShowKey((v) => !v)}>{showKey ? t('side.hide') : t('side.show')}</button>
         </span>
       </label>
       <label>
-        Model
+        {t('side.model')}
         <span className="key-row">
           <input value={model} onChange={(e) => { setModel(e.target.value); setModels(null); }} placeholder={DEFAULT_MODEL} autoComplete="off" />
           <button className="mini" onClick={fetchModels} disabled={fetchingModels || (!apiKey.trim() && !status?.envConfigured)}>
-            {fetchingModels ? 'Fetching…' : 'Fetch'}
+            {fetchingModels ? t('side.fetching') : t('side.fetch')}
           </button>
         </span>
         {models && (
@@ -170,7 +170,7 @@ function Settings() {
             value={models.includes(model) ? model : ''}
             onChange={(e) => setModel(e.target.value)}
           >
-            {!models.includes(model) && <option value="">— choose a model —</option>}
+            {!models.includes(model) && <option value="">{t('side.chooseModel')}</option>}
             {models.map((m) => (
               <option key={m} value={m}>{m}</option>
             ))}
@@ -178,51 +178,49 @@ function Settings() {
         )}
       </label>
       <label>
-        Reasoning effort
+        {t('side.effort')}
         <select className="model-picker" value={effort} onChange={(e) => setEffort(e.target.value)}>
-          <option value="">Default (model decides)</option>
-          <option value="low">Low — fastest, cheapest</option>
-          <option value="high">High</option>
-          <option value="max">Max — deepest thinking</option>
+          <option value="">{t('side.effortDefault')}</option>
+          <option value="low">{t('side.effortLow')}</option>
+          <option value="high">{t('side.effortHigh')}</option>
+          <option value="max">{t('side.effortMax')}</option>
         </select>
       </label>
       <div className="side-actions">
-        <button className="primary" onClick={save}>Save</button>
-        <button onClick={testConnection}>Test connection</button>
-        <button onClick={reset}>Reset</button>
+        <button className="primary" onClick={save}>{t('side.save')}</button>
+        <button onClick={testConnection}>{t('side.testConnection')}</button>
+        <button onClick={reset}>{t('side.reset')}</button>
       </div>
       {test && <p className={`test-result ${test.state}`}>{test.message}</p>}
 
-      <h3>How good is the offline coach?</h3>
+      <h3>{t('side.offlineHowGood')}</h3>
       <p className="side-note">
-        It runs the same Stockfish 16 the opponents use, so its assessments are engine-accurate:
-        position evaluation, pawn-unit grading of your last move, and hanging-piece alerts.
-        What it can't do is free conversation — it answers questions about the position,
-        not general chat. Add an API key above for the full conversational coach.
+        {t('side.offlineExplain')}
       </p>
     </div>
   );
 }
 
 function Logs() {
+  const t = useT();
   const [log, setLog] = useState(getCoachLog());
   return (
     <div className="side-body">
       <div className="logs-head">
-        <h3>Coach request log</h3>
-        {log.length > 0 && <button className="mini" onClick={() => { clearCoachLog(); setLog([]); }}>Clear</button>}
+        <h3>{t('side.requestLog')}</h3>
+        {log.length > 0 && <button className="mini" onClick={() => { clearCoachLog(); setLog([]); }}>{t('side.clear')}</button>}
       </div>
-      {log.length === 0 && <p className="side-note">No coach requests yet.</p>}
+      {log.length === 0 && <p className="side-note">{t('side.noRequests')}</p>}
       <ul className="log-list">
         {log.map((e, i) => (
           <li key={i} className={e.ok ? '' : 'err'}>
             <div className="log-meta">
-              <span className={`badge ${e.mode === 'live' ? 'live' : 'offline'}`}>{e.mode}</span>
+              <span className={`badge ${e.mode === 'live' ? 'live' : 'offline'}`}>{e.mode === 'live' ? t('side.modeLive') : t('side.modeOffline')}</span>
               <span className="log-model">{e.model || '—'}</span>
               <span>{new Date(e.t).toLocaleTimeString()}</span>
               <span>{e.latencyMs} ms</span>
             </div>
-            <div className="log-q">{e.question || '(context block)'}</div>
+            <div className="log-q">{e.question || t('side.contextBlock')}</div>
             {e.error && <div className="log-err">{e.error}</div>}
           </li>
         ))}

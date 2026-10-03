@@ -30,6 +30,10 @@ export function classify(drop, playedBest) {
 export const CLASS_LABELS = {
   best: 'Best move', good: 'Good move', inaccuracy: 'Inaccuracy', mistake: 'Mistake', blunder: 'Blunder',
 };
+/** i18n keys for the classification labels (CLASS_LABELS stays as the English default). */
+export const CLASS_KEYS = {
+  best: 'review.class.best', good: 'review.class.good', inaccuracy: 'review.class.inaccuracy', mistake: 'review.class.mistake', blunder: 'review.class.blunder',
+};
 export const CLASS_SYMBOLS = { best: '★', good: '', inaccuracy: '?!', mistake: '?', blunder: '??' };
 
 /** Positions of a game: [{fen, san, uci, color}] — entry 0 is the start (no move). */

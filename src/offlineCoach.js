@@ -45,7 +45,7 @@ export async function offlineCoachReply({ fen, pgn, message, stage }) {
   const lines = [];
 
   // keyword-ish intents get richer answers
-  const wantsConcept = /(fork|pin|skewer|mate|opening|endgame|tactic|what should|plan|idea|help)/.test(q);
+  const wantsConcept = /(fork|pin|skewer|mate|opening|endgame|tactic|what should|plan|idea|help|debería|ayuda|clavada|horquilla|apertura|final|táctica)/.test(q); // + Spanish quick questions
 
   // single shallow pass — the shared engine queue stays responsive for moves
   const [before, after] = await Promise.all([

@@ -6,17 +6,19 @@ import { askCoach } from '../api.js';
 import { getGame, updateGame, importPgn, listGames, subscribeLibrary } from '../library.js';
 import {
   positionsOf, runReview, winPercent, evalLabel, keyMoments, uciToSan,
-  CLASS_LABELS, CLASS_SYMBOLS,
+  CLASS_KEYS, CLASS_SYMBOLS,
 } from '../review.js';
+import { t as tr, useT, useLang } from '../i18n.js';
 import { playMoveSound } from '../sound.js';
 import './analysis.css';
 
 /** Vertical (laptop) / horizontal (phone) bar showing White's winning chances. */
 export function EvalBar({ score, orientation = 'w' }) {
+  const t = useT();
   const white = score ? winPercent(score) : 50;
   const label = score ? evalLabel(score) : '…';
   return (
-    <div className={`eval-bar${orientation === 'b' ? ' flipped' : ''}`} role="img" aria-label={`Evaluation ${label}`}>
+    <div className={`eval-bar${orientation === 'b' ? ' flipped' : ''}`} role="img" aria-label={t('analysis.evalAria', { label })}>
       <div className="eval-fill" style={{ '--white': `${white}%` }} />
       <span className={`eval-text ${white >= 50 ? 'on-white' : 'on-black'}`}>{label}</span>
     </div>
@@ -25,6 +27,7 @@ export function EvalBar({ score, orientation = 'w' }) {
 
 /** Win% curve over the game; click/tap to jump to a ply. */
 function EvalGraph({ evals, ply, onSelect, moves }) {
+  const t = useT();
   const w = 600, h = 90;
   if (!evals?.length) return null;
   const n = Math.max(1, evals.length - 1);
@@ -37,7 +40,7 @@ function EvalGraph({ evals, ply, onSelect, moves }) {
     onSelect(Math.max(0, Math.min(evals.length - 1, Math.round(x * n))));
   }
   return (
-    <svg className="eval-graph" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" onPointerDown={pick} role="img" aria-label="Evaluation graph — click to jump to a move">
+    <svg className="eval-graph" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" onPointerDown={pick} role="img" aria-label={t('analysis.graphAria')}>
       <rect x="0" y="0" width={w} height={h} className="eg-bg" />
       <path d={area} className="eg-area" />
       <line x1="0" y1={h / 2} x2={w} y2={h / 2} className="eg-mid" />
@@ -51,17 +54,18 @@ function EvalGraph({ evals, ply, onSelect, moves }) {
 }
 
 function SummaryCard({ review, white, black }) {
+  const t = useT();
   const row = (c, name) => {
     const s = review.summary[c];
     return (
       <div className="sum-row">
         <span className={`sum-side ${c === 'w' ? 'white' : 'black'}`} aria-hidden="true" />
         <span className="sum-name">{name}</span>
-        <span className="sum-acc" title="Accuracy">{s.accuracy ?? '—'}%</span>
+        <span className="sum-acc" title={t('analysis.accuracy')}>{s.accuracy ?? '—'}%</span>
         <span className="sum-counts">
-          <span className="c-inaccuracy" title="Inaccuracies">{s.inaccuracy}?!</span>
-          <span className="c-mistake" title="Mistakes">{s.mistake}?</span>
-          <span className="c-blunder" title="Blunders">{s.blunder}??</span>
+          <span className="c-inaccuracy" title={t('analysis.inaccuracies')}>{s.inaccuracy}?!</span>
+          <span className="c-mistake" title={t('analysis.mistakes')}>{s.mistake}?</span>
+          <span className="c-blunder" title={t('analysis.blunders')}>{s.blunder}??</span>
         </span>
       </div>
     );
@@ -80,22 +84,29 @@ function localSummary(review, headers) {
   for (const c of ['w', 'b']) {
     const s = review.summary[c];
     const name = c === 'w' ? headers.white : headers.black;
-    lines.push(`${name}: ${s.accuracy ?? '—'}% accuracy — ${s.blunder} blunder${s.blunder === 1 ? '' : 's'}, ${s.mistake} mistake${s.mistake === 1 ? '' : 's'}, ${s.inaccuracy} inaccurac${s.inaccuracy === 1 ? 'y' : 'ies'}.`);
+    lines.push(tr('analysis.sumLine', {
+      name, acc: s.accuracy ?? '—',
+      blunders: tr('analysis.nBlunders', { count: s.blunder }),
+      mistakes: tr('analysis.nMistakes', { count: s.mistake }),
+      inaccuracies: tr('analysis.nInaccuracies', { count: s.inaccuracy }),
+    }));
   }
   const km = keyMoments(review);
   if (km.length) {
-    lines.push('Turning points:');
+    lines.push(tr('analysis.turningPoints'));
     for (const m of km) {
       const num = Math.ceil(m.ply / 2) + (m.color === 'w' ? '.' : '...');
-      lines.push(`• ${num} ${m.san} (${CLASS_LABELS[m.cls].toLowerCase()}) — better was ${m.bestSan || m.best}.`);
+      lines.push(tr('analysis.turningLine', { num, san: m.san, cls: tr(CLASS_KEYS[m.cls]).toLowerCase(), best: m.bestSan || m.best }));
     }
   } else {
-    lines.push('No serious mistakes — a clean game. Compare your plans with the engine line in the quieter moments.');
+    lines.push(tr('analysis.cleanGame'));
   }
   return lines.join('\n');
 }
 
 export default function Analysis({ gameId, onOpenGame }) {
+  const t = useT();
+  const lang = useLang();
   const entry = useMemo(() => (gameId ? getGame(gameId) : null), [gameId]);
   const [pgnText, setPgnText] = useState('');
   const [importMsg, setImportMsg] = useState('');
@@ -104,15 +115,18 @@ export default function Analysis({ gameId, onOpenGame }) {
 
   // mainline from the saved game (or an empty board for free analysis)
   const { positions, headers, loadError } = useMemo(() => {
-    if (!entry) return { positions: positionsOf(new Chess()), headers: { white: 'White', black: 'Black' }, loadError: null };
+    const W = tr('common.white'), B = tr('common.black');
+    if (!entry) return { positions: positionsOf(new Chess()), headers: { white: W, black: B }, loadError: null };
     try {
       const g = new Chess();
       g.loadPgn(entry.pgn);
-      return { positions: positionsOf(g), headers: { white: entry.white || 'White', black: entry.black || 'Black' }, loadError: null };
+      return { positions: positionsOf(g), headers: { white: entry.white || W, black: entry.black || B }, loadError: null };
     } catch (e) {
-      return { positions: positionsOf(new Chess()), headers: { white: 'White', black: 'Black' }, loadError: String(e?.message || e) };
+      return { positions: positionsOf(new Chess()), headers: { white: W, black: B }, loadError: String(e?.message || e) };
     }
-  }, [entry]);
+    // lang: default player names are translated
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [entry, lang]);
 
   const [ply, setPly] = useState(0);
   const [variation, setVariation] = useState(null); // {basePly, fens:[...], sans:[...], lastMove}
@@ -171,7 +185,7 @@ export default function Analysis({ gameId, onOpenGame }) {
     setLive(null);
     if (!engineOn || progress) return;
     let cancelled = false;
-    const t = setTimeout(async () => {
+    const timer = setTimeout(async () => {
       try {
         const r = await analyze(shownFen, { depth: 18, movetime: 700 });
         if (cancelled) return;
@@ -183,7 +197,7 @@ export default function Analysis({ gameId, onOpenGame }) {
         });
       } catch { /* engine busy/unavailable */ }
     }, 120);
-    return () => { cancelled = true; clearTimeout(t); };
+    return () => { cancelled = true; clearTimeout(timer); };
   }, [shownFen, engineOn, progress]);
 
   const score = live || storedEval;
@@ -229,8 +243,8 @@ export default function Analysis({ gameId, onOpenGame }) {
   // ←/→ step through the game (ignored while typing)
   useEffect(() => {
     function onKey(e) {
-      const t = e.target;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
+      const el = e.target;
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return;
       if (e.key === 'ArrowLeft') { e.preventDefault(); back(); }
       else if (e.key === 'ArrowRight') { e.preventDefault(); forward(); }
       else if (e.key === 'Home') go(0);
@@ -277,16 +291,16 @@ export default function Analysis({ gameId, onOpenGame }) {
     // a lone FEN opens as a free-analysis position
     try {
       const g = new Chess(text);
-      setVariation({ basePly: 0, fens: [positions[0].fen, g.fen()], sans: ['(position)'], lastMove: null });
-      setImportMsg('Position loaded.');
+      setVariation({ basePly: 0, fens: [positions[0].fen, g.fen()], sans: [t('analysis.positionToken')], lastMove: null });
+      setImportMsg(t('analysis.positionLoaded'));
       setPgnText('');
       return;
     } catch { /* not a FEN — try PGN */ }
     const before = listGames()[0]?.id;
     const { added, errors } = importPgn(text);
-    if (!added) { setImportMsg(`Couldn't read that PGN${errors ? ` (${errors} game${errors > 1 ? 's' : ''} failed)` : ''}.`); return; }
+    if (!added) { setImportMsg(errors ? t('analysis.importFailedN', { count: errors }) : t('analysis.importFailed')); return; }
     setPgnText('');
-    setImportMsg(`Imported ${added} game${added > 1 ? 's' : ''}${errors ? `, ${errors} skipped` : ''}.`);
+    setImportMsg(errors ? t('analysis.importedSkipped', { added: t('analysis.nGames', { count: added }), skipped: errors }) : t('analysis.imported', { added: t('analysis.nGames', { count: added }) }));
     const first = listGames().find((g) => g.id !== before);
     if (first) onOpenGame(first.id);
   }
@@ -301,7 +315,7 @@ export default function Analysis({ gameId, onOpenGame }) {
           type="button"
           className={`am${!variation && ply === i ? ' active' : ''}${m ? ` cls-${m.cls}` : ''}`}
           onClick={() => go(i)}
-          aria-label={`${positions[i].san}${m && m.cls !== 'good' ? `, ${CLASS_LABELS[m.cls]}` : ''}`}
+          aria-label={`${positions[i].san}${m && m.cls !== 'good' ? `, ${t(CLASS_KEYS[m.cls])}` : ''}`}
         >
           {positions[i].san}{m && CLASS_SYMBOLS[m.cls] ? <sup>{CLASS_SYMBOLS[m.cls]}</sup> : null}
         </button>
@@ -327,53 +341,53 @@ export default function Analysis({ gameId, onOpenGame }) {
             />
           </div>
         </div>
-        <div className="an-nav" role="toolbar" aria-label="Move navigation">
-          <button type="button" className="icon-btn" onClick={() => go(0)} aria-label="First move" disabled={!variation && ply === 0}>«</button>
-          <button type="button" className="icon-btn" onClick={back} aria-label="Previous move" disabled={!variation && ply === 0}>‹</button>
-          <button type="button" className="icon-btn" onClick={forward} aria-label="Next move" disabled={!!variation || ply >= positions.length - 1}>›</button>
-          <button type="button" className="icon-btn" onClick={() => go(positions.length - 1)} aria-label="Last move" disabled={!variation && ply >= positions.length - 1}>»</button>
-          <button type="button" className="icon-btn" onClick={() => setOrientation((o) => (o === 'w' ? 'b' : 'w'))} aria-label="Flip board" title="Flip board (f)">⇅</button>
+        <div className="an-nav" role="toolbar" aria-label={t('analysis.moveNav')}>
+          <button type="button" className="icon-btn" onClick={() => go(0)} aria-label={t('analysis.first')} disabled={!variation && ply === 0}>«</button>
+          <button type="button" className="icon-btn" onClick={back} aria-label={t('analysis.prev')} disabled={!variation && ply === 0}>‹</button>
+          <button type="button" className="icon-btn" onClick={forward} aria-label={t('analysis.next')} disabled={!!variation || ply >= positions.length - 1}>›</button>
+          <button type="button" className="icon-btn" onClick={() => go(positions.length - 1)} aria-label={t('analysis.last')} disabled={!variation && ply >= positions.length - 1}>»</button>
+          <button type="button" className="icon-btn" onClick={() => setOrientation((o) => (o === 'w' ? 'b' : 'w'))} aria-label={t('analysis.flip')} title={t('analysis.flipTitle')}>⇅</button>
           <label className="an-toggle">
             <input type="checkbox" checked={engineOn} onChange={(e) => setEngineOn(e.target.checked)} />
-            Engine
+            {t('analysis.engine')}
           </label>
         </div>
         <p className="an-status" aria-live="polite">
           {variation
-            ? <>Exploring: {variation.sans.join(' ')} <button type="button" className="linklike" onClick={() => setVariation(null)}>back to game</button></>
+            ? <>{t('analysis.exploring')} {variation.sans.join(' ')} <button type="button" className="linklike" onClick={() => setVariation(null)}>{t('analysis.backToGame')}</button></>
             : reviewMove
               ? <>
                   <strong>{Math.ceil(ply / 2)}{reviewMove.color === 'w' ? '.' : '...'} {reviewMove.san}</strong>
-                  {' — '}<span className={`cls-${reviewMove.cls}`}>{CLASS_LABELS[reviewMove.cls]}</span>
-                  {reviewMove.cls !== 'best' && reviewMove.best && <> · best was <strong>{reviewMove.bestSan || reviewMove.best}</strong></>}
+                  {' — '}<span className={`cls-${reviewMove.cls}`}>{t(CLASS_KEYS[reviewMove.cls])}</span>
+                  {reviewMove.cls !== 'best' && reviewMove.best && <> · {t('analysis.bestWas')} <strong>{reviewMove.bestSan || reviewMove.best}</strong></>}
                 </>
-              : engineOn && live?.best ? <>Engine: <strong>{uciToSan(shownFen, live.best) || live.best}</strong> ({evalLabel(live)})</> : ' '}
+              : engineOn && live?.best ? <>{t('analysis.engineLabel')} <strong>{uciToSan(shownFen, live.best) || live.best}</strong> ({evalLabel(live)})</> : ' '}
         </p>
       </div>
 
       <aside className="analysis-side panel">
-        {loadError && <p className="online-error">Couldn't load this game: {loadError}</p>}
+        {loadError && <p className="online-error">{t('analysis.loadError', { error: loadError })}</p>}
         {entry ? (
           <div className="an-head">
-            <h3>{headers.white} vs {headers.black}</h3>
+            <h3>{t('analysis.vs', { white: headers.white, black: headers.black })}</h3>
             <p className="side-note">{entry.result || '*'} · {new Date(entry.date).toLocaleDateString()}{entry.event ? ` · ${entry.event}` : ''}</p>
           </div>
         ) : (
           <div className="an-head">
-            <h3>Analysis board</h3>
-            <p className="side-note">Move pieces freely to explore with the engine, or open a game to review it.</p>
+            <h3>{t('analysis.boardTitle')}</h3>
+            <p className="side-note">{t('analysis.boardIntro')}</p>
           </div>
         )}
 
         {progress && (
           <div className="review-progress" role="status">
-            <span>Reviewing… {progress.done}/{progress.total}</span>
+            <span>{t('analysis.reviewing', { done: progress.done, total: progress.total })}</span>
             <progress max={progress.total} value={progress.done} />
-            <button type="button" className="mini" onClick={() => abortRef.current?.abort()}>Stop</button>
+            <button type="button" className="mini" onClick={() => abortRef.current?.abort()}>{t('analysis.stop')}</button>
           </div>
         )}
         {entry && !review && !progress && positions.length > 1 && (
-          <button type="button" className="primary" onClick={startReview}>Review this game</button>
+          <button type="button" className="primary" onClick={startReview}>{t('analysis.reviewGame')}</button>
         )}
         {review && (
           <>
@@ -390,24 +404,24 @@ export default function Analysis({ gameId, onOpenGame }) {
           <div className="coach-summary">
             {coachText
               ? <p className="coach-summary-text">{coachText}</p>
-              : <button type="button" className="mini" onClick={askSummary} disabled={coachBusy}>{coachBusy ? 'Coach is thinking…' : 'Ask the coach for a summary'}</button>}
-            {coachText && <button type="button" className="linklike" onClick={askSummary} disabled={coachBusy}>{coachBusy ? 'Thinking…' : 'Ask again'}</button>}
+              : <button type="button" className="mini" onClick={askSummary} disabled={coachBusy}>{coachBusy ? t('analysis.coachThinking') : t('analysis.askSummary')}</button>}
+            {coachText && <button type="button" className="linklike" onClick={askSummary} disabled={coachBusy}>{coachBusy ? t('analysis.thinking') : t('analysis.askAgain')}</button>}
           </div>
         )}
 
         <details className="an-import" open={!entry}>
-          <summary>Import PGN or FEN</summary>
+          <summary>{t('analysis.importTitle')}</summary>
           <textarea
             value={pgnText}
             onChange={(e) => setPgnText(e.target.value)}
             rows={4}
-            placeholder={'[Event "…"]\n1. e4 e5 2. Nf3 …   or a FEN'}
-            aria-label="PGN or FEN to import"
+            placeholder={t('analysis.importPlaceholder')}
+            aria-label={t('analysis.importAria')}
           />
           <div className="an-import-row">
-            <button type="button" className="primary" onClick={doImport} disabled={!pgnText.trim()}>Import</button>
+            <button type="button" className="primary" onClick={doImport} disabled={!pgnText.trim()}>{t('analysis.import')}</button>
             <label className="mini file-btn">
-              Open .pgn file
+              {t('analysis.openFile')}
               <input
                 type="file"
                 accept=".pgn,text/plain"
@@ -424,10 +438,10 @@ export default function Analysis({ gameId, onOpenGame }) {
 
         {!entry && recent.length > 0 && (
           <div className="an-recent">
-            <h4>Recent games</h4>
+            <h4>{t('analysis.recent')}</h4>
             {recent.map((g) => (
               <button key={g.id} type="button" className="an-recent-item" onClick={() => onOpenGame(g.id)}>
-                {g.white} vs {g.black} <span className="side-note">{g.result}</span>
+                {t('analysis.vs', { white: g.white, black: g.black })} <span className="side-note">{g.result}</span>
               </button>
             ))}
           </div>

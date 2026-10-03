@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
+import { useT } from '../i18n.js';
 
 export const GLYPHS = {
   k: '♚', q: '♛', r: '♜', b: '♝', n: '♞', p: '♟',
@@ -141,6 +142,7 @@ function premoveTargets(fen, from) {
  * Right-click a square to circle it, right-drag to draw an arrow (cleared by a left click or a new position).
  */
 export default function Board({ fen, orientation = 'w', onMove, highlights = {}, lastMove, hint = null, arrows = [], pieceSet = 'classic', viewOnly = false, showCoords = true, blindfold = false, flashSquare = null, premove = null, onPremove = null, playerColor = null }) {
+  const tr = useT();
   const [selected, setSelected] = useState(null);
   const [promo, setPromo] = useState(null); // {from,to} awaiting promotion choice
   const [drag, setDrag] = useState(null); // {from,x,y} while dragging
@@ -335,7 +337,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
       <div
         className="board"
         role="grid"
-        aria-label="Chess board. Use arrow keys to move the focus square, Enter to select and move."
+        aria-label={tr('board.label')}
         tabIndex={0}
         onKeyDown={onBoardKeyDown}
         onContextMenu={onContextMenu}
@@ -354,12 +356,12 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
           if (marks.circles.includes(sq)) cls.push('marked');
           const occupant = game.get(sq);
           let label = sq;
-          if (occupant) label += `, ${occupant.color === 'w' ? 'white' : 'black'} ${PIECE_NAMES[occupant.type]}`;
-          else label += ', empty';
+          if (occupant) label += `, ${tr(`board.piece.${occupant.color}${occupant.type}`)}`;
+          else label += `, ${tr('board.empty')}`;
           if (legalTargets[sq]) {
             label += occupant && occupant.color !== game.turn()
-              ? `, can capture ${occupant.color === 'w' ? 'white' : 'black'} ${PIECE_NAMES[occupant.type]}`
-              : ', legal move';
+              ? `, ${tr('board.canCapture', { piece: tr(`board.piece.${occupant.color}${occupant.type}`) })}`
+              : `, ${tr('board.legalMove')}`;
           }
           return (
             <button
@@ -388,7 +390,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
           const rows = [0, 1, 2, 3].map((i) => pr.row + dir * i);
           const fixed = rows.every((r) => r >= 0 && r <= 7) ? rows : [0, 1, 2, 3].map((i) => pr.row - dir * i);
           return (
-            <div className="promo-chooser" role="dialog" aria-label="Choose promotion piece">
+            <div className="promo-chooser" role="dialog" aria-label={tr('board.choosePromo')}>
               {['q', 'n', 'r', 'b'].map((t, i) => (
                 <button
                   key={t}
@@ -396,12 +398,12 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
                   className={`promo-btn ${mover === 'w' ? 'white' : 'black'}`}
                   style={{ left: `${pr.col * 12.5}%`, top: `${fixed[i] * 12.5}%` }}
                   onClick={(e) => { e.stopPropagation(); choosePromo(t); }}
-                  aria-label={`Promote to ${t}`}
+                  aria-label={tr('board.promoteTo', { piece: tr(`board.piece.${mover}${t}`) })}
                 >
                   <PieceGlyph type={t} color={mover} pieceSet={blindfold ? 'letters' : pieceSet} />
                 </button>
               ))}
-              <button type="button" className="promo-cancel" onClick={() => setPromo(null)} aria-label="Cancel promotion">✕</button>
+              <button type="button" className="promo-cancel" onClick={() => setPromo(null)} aria-label={tr('board.cancelPromo')}>✕</button>
             </div>
           );
         })()}
