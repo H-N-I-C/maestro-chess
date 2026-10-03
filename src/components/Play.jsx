@@ -1,16 +1,17 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import Board, { GLYPHS } from './Board.jsx';
 import CoachPanel from './CoachPanel.jsx';
 import CoachWidget from './CoachWidget.jsx';
 import SidePanel from './SidePanel.jsx';
+import { OnlineLobby, GameOverPanel, MovesSidePanel, ShareDialog } from './play/PlayPanels.jsx';
 import { DIFFICULTIES, bestMove, analyze, customLevel } from '../engine.js';
 import { playMoveSound } from '../sound.js';
 import { hostGame, joinGame, makeCode } from '../online.js';
 import { openingName } from '../openings.js';
 import { resetCoachChat } from '../coachChat.js';
 import { useClocks, TIME_CONTROLS, migrateTimeControl, formatClock } from '../hooks/useClocks.js';
-import { saveGame, updateRating, getRating, suggestedLevel } from '../library.js';
+import { saveGame, updateRating } from '../library.js';
 import { Chess960Game, randomStartIndex, loadFen as loadAnyFen } from '../chess960.js';
 import { gameFromHistory, playMove, drawReason, capturedFromHistory, isValidHistory, spokenSan } from '../gameUtils.js';
 import { t, useT, useLang } from '../i18n.js';
@@ -287,13 +288,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     return () => { if (hintTimerRef.current) clearTimeout(hintTimerRef.current); };
   }, []);
 
-  // Esc dismisses the share panel
-  useEffect(() => {
-    if (!shareOpen) return;
-    function onKey(e) { if (e.key === 'Escape') setShareOpen(false); }
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [shareOpen]);
+  const closeShare = useCallback(() => setShareOpen(false), []); // stable: the dialog's focus effect depends on it
 
   useEffect(() => {
     const mql = window.matchMedia(MOBILE_QUERY);
@@ -1468,36 +1463,14 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
             </div>
           )}
           {online.status !== 'off' && online.status !== 'playing' ? (
-            <div className="online-lobby panel">
-              <h3>{t('play.playFriendOnline')}</h3>
-              {online.status === 'idle' && (
-                <>
-                  <p className="side-note">{t('play.lobby.intro')}</p>
-                  <button type="button" className="primary" onClick={onlineCreate}>{t('play.lobby.create')}</button>
-                  <div className="join-row">
-                    <input
-                      value={joinCode}
-                      onChange={(e) => setJoinCode(e.target.value)}
-                      onKeyDown={(e) => e.key === 'Enter' && onlineJoin()}
-                      placeholder={t('play.lobby.enterCode')}
-                      maxLength={6}
-                      aria-label={t('play.lobby.gameCode')}
-                    />
-                    <button type="button" onClick={() => onlineJoin()} disabled={joinCode.trim().length < 4}>{t('play.lobby.join')}</button>
-                  </div>
-                </>
-              )}
-              {online.status === 'waiting' && (
-                <>
-                  <p className="side-note">{t('play.lobby.shareCode')}</p>
-                  <p className="online-code">{online.code}</p>
-                  <p className="side-note">{t('play.lobby.waiting')}</p>
-                </>
-              )}
-              {online.status === 'connecting' && <p className="side-note">{t('play.lobby.connectingBefore')}<strong>{online.code}</strong>{t('play.lobby.connectingAfter')}</p>}
-              {online.status === 'error' && <p className="online-error">{online.error || t('play.lobby.couldNotConnect')}</p>}
-              <button type="button" className="mini" onClick={leaveOnline}>{t('play.cancel')}</button>
-            </div>
+            <OnlineLobby
+              online={online}
+              joinCode={joinCode}
+              setJoinCode={setJoinCode}
+              onCreate={onlineCreate}
+              onJoin={onlineJoin}
+              onCancel={leaveOnline}
+            />
           ) : (
           <>
           {oppGone && <div className="online-gone">{t('play.oppDisconnected')}</div>}
@@ -1640,57 +1613,21 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
                 : thinking ? <span className="thinking">{t('play.status.maestroThinking')}</span> : status || `${game.turn() === color ? t('play.status.yourMove') : t('play.status.oppToMove')} (${game.turn() === 'w' ? t('play.whiteLower') : t('play.blackLower')})`}
           </div>
           {(game.isGameOver() || onlineOver || timeOver || manualResult) && !viewing && (
-            <div className="game-over panel">
-              <p className="go-title">
-                {onlineOver === 'win-resign' ? t('play.over.oppResigned')
-                  : onlineOver === 'lose-resign' ? t('play.over.youResigned')
-                  : onlineOver === 'win-time' ? t('play.over.winOnTime')
-                  : onlineOver === 'lose-time' ? t('play.over.lostOnTime')
-                  : onlineOver === 'draw-agreed' ? t('play.over.drawAgreed')
-                  : manualResult ? manualResult.title
-                  : timeOver ? (timeOver === color ? t('play.status.timeLose').replace(/\.$/, '') : t('play.status.timeWin').replace(/\.$/, ''))
-                  : game.isCheckmate()
-                    ? t('play.over.checkmateWins', { side: game.turn() === 'w' ? t('common.black') : t('common.white') })
-                    : game.isDraw() ? drawReason(game, t).replace(/\.$/, '') : t('play.over.gameOver')}
-              </p>
-              <p className="go-detail">
-                {onlineOver
-                  ? t('play.over.onlineDetail')
-                  : manualResult ? manualResult.detail
-                  : timeOver
-                    ? (timeOver === color ? t('play.over.clockRanOut') : t('play.over.maestroFlagged'))
-                    : game.isCheckmate()
-                      ? (game.turn() === color ? t('play.over.askCoachWrong') : t('play.over.wellPlayed'))
-                      : game.isDraw()
-                        ? drawReason(game, t) + ' ' + t('play.over.askCoachIdeas')
-                        : t('play.over.askCoachIdeas')}
-              </p>
-              <div className="go-actions">
-                <button type="button" className="primary" onClick={() => { if (mode === 'watch') startWatch(); else if (mode === 'online') requestNewGame(); else newGame(); }}>{mode === 'watch' ? t('play.over.watchAnother') : mode === 'online' ? t('play.over.rematch') : t('play.newGame')}</button>
-                <button
-                  type="button"
-                  className="go-review"
-                  onClick={() => setViewIndex((history?.length || 1) > 1 ? 1 : 0)}
-                >
-                  {t('play.over.replay')}
-                </button>
-                {savedGameId && (
-                  <button type="button" className="go-review" onClick={() => onAnalyze(savedGameId)}>
-                    {t('play.over.analyze')}
-                  </button>
-                )}
-              </div>
-              {ratingChange && mode === 'play' && (
-                <p className="go-rating">
-                  {t('play.over.ratingEstimate')} <strong>{ratingChange.rating}</strong>{' '}
-                  <span className={ratingChange.delta >= 0 ? 'up' : 'down'}>({ratingChange.delta >= 0 ? '+' : ''}{ratingChange.delta})</span>
-                  {ratingChange.games >= 5 && (() => {
-                    const s = suggestedLevel(DIFFICULTIES, ratingChange.rating);
-                    return s && s.id !== difficulty.id ? <> · {t('play.over.tryBefore')}<strong>{levelName(s)}</strong>{t('play.over.tryAfter')}</> : null;
-                  })()}
-                </p>
-              )}
-            </div>
+            <GameOverPanel
+              game={game}
+              mode={mode}
+              color={color}
+              onlineOver={onlineOver}
+              manualResult={manualResult}
+              timeOver={timeOver}
+              savedGameId={savedGameId}
+              ratingChange={ratingChange}
+              difficulty={difficulty}
+              levelName={levelName}
+              onPrimary={() => { if (mode === 'watch') startWatch(); else if (mode === 'online') requestNewGame(); else newGame(); }}
+              onReplay={() => setViewIndex((history?.length || 1) > 1 ? 1 : 0)}
+              onAnalyze={onAnalyze}
+            />
           )}
           {mode === 'online' && (
             <div className="online-chat panel">
@@ -1727,80 +1664,32 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
           <CapturedTray victims={byBlack} advantage={-whiteAdv} pieceColor="white" />
         </div>
       )}
-      <aside className={`game-side panel${movesOpen ? '' : ' collapsed'}`} aria-label={t('play.moveList')}>
-        <button type="button" className="game-side-head" onClick={() => setMovesOpen((v) => !v)} aria-expanded={movesOpen} title={movesOpen ? t('play.collapseMoves') : t('play.expandMoves')}>
-          <h3 className="game-side-title">{t('play.moves')}</h3>
-          <span className="game-side-caret" aria-hidden="true">{movesOpen ? '›' : '‹'}</span>
-        </button>
-        <button type="button" className="mini share-btn" onClick={() => setShareOpen(true)} title={t('play.shareTitle')}>{t('play.shareBtn')}</button>
-        {opening && <p className="opening-side">{opening}</p>}
-        {movesOpen && boardLastMove && (
-          <div className="last-move-line" aria-live="polite">
-            <span className={`lm-glyph ${boardLastMove.color === 'w' ? 'white' : 'black'}`}>{GLYPHS[boardLastMove.piece]}</span>
-            <span className="lm-text">
-              <strong>{boardLastMove.color === 'w' ? t('common.white') : t('common.black')}</strong> {t('play.played')} <strong>{boardLastMove.san}</strong>
-              <span className="lm-sq"> ({boardLastMove.from} → {boardLastMove.to})</span>
-            </span>
-          </div>
-        )}
-        {movesOpen && (
-        <ol className="move-list" ref={moveListRef}>
-          {(() => {
-            const rows = [];
-            for (let k = 1; k < (history?.length || 0); k += 2) {
-              const white = history[k].lastMove;
-              const black = k + 1 < history.length ? history[k + 1].lastMove : null;
-              const num = (k + 1) / 2;
-              const activePly = viewing ? viewIndex : history.length - 1;
-              rows.push(
-                <li key={num}>
-                  <span className="mv-num">{num}</span>
-                  <button type="button" className={`mv${activePly === k ? ' active' : ''}`} onClick={() => setViewIndex(k === history.length - 1 ? null : k)}>{white?.san}</button>
-                  {black && (
-                    <button type="button" className={`mv${activePly === k + 1 ? ' active' : ''}`} onClick={() => setViewIndex(k + 1 === history.length - 1 ? null : k + 1)}>{black.san}</button>
-                  )}
-                </li>
-              );
-            }
-            return rows;
-          })()}
-        </ol>
-        )}
-        <div className="results-line">
-          {mode === 'online'
-            ? <>{t('play.results.online')} <strong>{results.online.w}{t('play.results.w')}</strong> · <strong>{results.online.l}{t('play.results.l')}</strong> · <strong>{results.online.d}{t('play.results.d')}</strong></>
-            : (() => {
-              const r = results.engine[difficulty.id] || { w: 0, l: 0, d: 0 };
-              const rating = getRating();
-              return <>{t('play.results.vs', { level: levelName(difficulty) })} <strong>{r.w}{t('play.results.w')}</strong> · <strong>{r.l}{t('play.results.l')}</strong> · <strong>{r.d}{t('play.results.d')}</strong>{rating.games > 0 && <> · {t('play.results.rating')} ~<strong>{rating.rating}</strong></>}</>;
-            })()}
-        </div>
-      </aside>
+      <MovesSidePanel
+        history={history}
+        viewIndex={viewIndex}
+        setViewIndex={setViewIndex}
+        movesOpen={movesOpen}
+        setMovesOpen={setMovesOpen}
+        boardLastMove={boardLastMove}
+        opening={opening}
+        onShare={() => setShareOpen(true)}
+        mode={mode}
+        results={results}
+        difficulty={difficulty}
+        levelName={levelName}
+        moveListRef={moveListRef}
+      />
       {shareOpen && (
-        <div className="share-overlay" role="dialog" aria-label={t('play.share.title')} onClick={() => setShareOpen(false)}>
-          <div className="share-panel panel" onClick={(e) => e.stopPropagation()}>
-            <div className="share-head">
-              <h3>{t('play.share.title')}</h3>
-              <button type="button" className="icon-btn" onClick={() => setShareOpen(false)} aria-label={t('play.close')}>✕</button>
-            </div>
-            <label className="share-label">PGN</label>
-            <textarea readOnly value={buildPgn()} rows={6} onFocus={(e) => e.target.select()} aria-label={t('play.share.pgnLabel')} />
-            <button type="button" className="mini" onClick={() => copyText(buildPgn(), 'pgn')}>{shareCopied === 'pgn' ? t('play.share.copied') : t('play.share.copyPgn')}</button>
-            <label className="share-label">FEN</label>
-            <textarea readOnly value={game.fen()} rows={2} onFocus={(e) => e.target.select()} aria-label={t('play.share.fenLabel')} />
-            <button type="button" className="mini" onClick={() => copyText(game.fen(), 'fen')}>{shareCopied === 'fen' ? t('play.share.copied') : t('play.share.copyFen')}</button>
-            <label className="share-label">{t('play.share.loadLabel')}</label>
-            <textarea
-              value={fenInput}
-              onChange={(e) => setFenInput(e.target.value)}
-              rows={2}
-              placeholder="rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
-              aria-label={t('play.share.fenToLoad')}
-            />
-            <button type="button" className="primary" onClick={loadFen} disabled={!fenInput.trim()}>{t('play.share.loadFen')}</button>
-            <p className="side-note">{t('play.share.loadNote')}</p>
-          </div>
-        </div>
+        <ShareDialog
+          pgn={buildPgn()}
+          fen={game.fen()}
+          copied={shareCopied}
+          onCopy={copyText}
+          fenInput={fenInput}
+          setFenInput={setFenInput}
+          onLoadFen={loadFen}
+          onClose={closeShare}
+        />
       )}
     </div>
   );
