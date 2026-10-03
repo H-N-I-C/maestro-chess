@@ -1173,7 +1173,11 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   const opening = useMemo(() => {
     try { return openingName(game.history()); } catch { return null; }
   }, [game]);
-  function stepPrev() { setViewIndex((i) => (i === null ? (history?.length || 1) - 2 : Math.max(0, i - 1))); }
+  function stepPrev() {
+    // no earlier position yet (fresh game): the ← key must not select index -1
+    if ((history?.length || 0) < 2) return;
+    setViewIndex((i) => (i === null ? history.length - 2 : Math.max(0, i - 1)));
+  }
   function stepNext() {
     setViewIndex((i) => {
       if (i === null) return null;
