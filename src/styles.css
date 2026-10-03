@@ -815,3 +815,5 @@ button.link { background: none; border: none; color: var(--accent); padding: 0; 
 .move-strip .mv { border: none; background: none; padding: 4px 6px; border-radius: 6px; font-size: 14px; }
 .move-strip .mv.active { background: var(--accent); color: var(--accent-ink); }
 @media (max-width: 900px) { .move-strip { display: flex; } }
+.share-inline { display: none; align-self: center; }
+@media (max-width: 900px) { .share-inline { display: inline-flex; } }

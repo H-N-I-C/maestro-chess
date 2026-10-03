@@ -2,6 +2,7 @@
    move by how much winning chance it gave away (the same model Lichess uses:
    win% from centipawns, per-move accuracy from the win% drop). */
 import { Chess } from 'chess.js';
+import { loadFen } from './chess960.js';
 
 /** Winning chance (0-100) for White from a White-POV score. */
 export function winPercent({ cp = null, mate = null }) {
@@ -43,14 +44,15 @@ export function positionsOf(pgnOrGame) {
   const start = moves.length ? moves[0].before : g.fen();
   const out = [{ fen: start, san: null, uci: null, color: null }];
   for (const m of moves) {
-    out.push({ fen: m.after, san: m.san, uci: m.from + m.to + (m.promotion || ''), color: m.color, from: m.from, to: m.to });
+    // 960 castles carry lan = king→rook (what the engine reports with UCI_Chess960)
+    out.push({ fen: m.after, san: m.san, uci: m.lan || m.from + m.to + (m.promotion || ''), color: m.color, from: m.from, to: m.to });
   }
   return out;
 }
 
 /** White-POV score of a terminal position, or null if the game goes on. */
 function terminalScore(fen) {
-  const g = new Chess(fen);
+  const g = loadFen(fen);
   // side to move is mated: a "mate in 1" for the winner keeps win% at 0/100
   if (g.isCheckmate()) return { cp: null, mate: g.turn() === 'w' ? -1 : 1, final: true };
   if (g.isDraw() || g.isStalemate()) return { cp: 0, mate: null };
@@ -101,7 +103,7 @@ export function buildReview(positions, evals) {
 
 export function uciToSan(fen, uci) {
   try {
-    const g = new Chess(fen);
+    const g = loadFen(fen);
     return g.move({ from: uci.slice(0, 2), to: uci.slice(2, 4), promotion: uci[4] }).san;
   } catch {
     return null;

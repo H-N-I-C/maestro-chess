@@ -3,6 +3,7 @@
 
 import { Chess } from 'chess.js';
 import { analyze } from './engine.js';
+import { loadFen, isChess960Pgn, load960Pgn } from './chess960.js';
 
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
@@ -18,7 +19,7 @@ function describeEval(cp, side) {
 
 /** Simple attack/defender audit: find pieces attacked more than defended. */
 function hangingPieces(fen) {
-  const g = new Chess(fen);
+  const g = loadFen(fen);
   const report = [];
   const board = g.board();
   for (let r = 0; r < 8; r++) {
@@ -39,7 +40,7 @@ function hangingPieces(fen) {
 }
 
 export async function offlineCoachReply({ fen, pgn, message, stage }) {
-  const g = new Chess(fen);
+  const g = loadFen(fen);
   const side = g.turn();
   const q = (message || '').toLowerCase();
   const lines = [];
@@ -80,12 +81,11 @@ export async function offlineCoachReply({ fen, pgn, message, stage }) {
 
 async function evalAfterLastMove(pgn) {
   try {
-    const g = new Chess();
-    g.loadPgn(pgn);
+    const load = () => { if (isChess960Pgn(pgn)) return load960Pgn(pgn); const c = new Chess(); c.loadPgn(pgn); return c; };
+    const g = load();
     const moves = g.history();
     if (moves.length < 1) return null;
-    const g2 = new Chess();
-    g2.loadPgn(pgn);
+    const g2 = load();
     g2.undo();
     const res = await analyze(g2.fen(), { depth: 6, movetime: 150 });
     return { cpBefore: res.cp, best: res.bestmove };

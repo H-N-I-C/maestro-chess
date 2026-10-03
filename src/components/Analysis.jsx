@@ -10,6 +10,7 @@ import {
 } from '../review.js';
 import { t as tr, useT, useLang } from '../i18n.js';
 import { playMoveSound } from '../sound.js';
+import { loadFen as loadAnyFen, isChess960Pgn, load960Pgn } from '../chess960.js';
 import './analysis.css';
 
 /** Vertical (laptop) / horizontal (phone) bar showing White's winning chances. */
@@ -118,8 +119,7 @@ export default function Analysis({ gameId, onOpenGame }) {
     const W = tr('common.white'), B = tr('common.black');
     if (!entry) return { positions: positionsOf(new Chess()), headers: { white: W, black: B }, loadError: null };
     try {
-      const g = new Chess();
-      g.loadPgn(entry.pgn);
+      const g = entry.variant === 'chess960' || isChess960Pgn(entry.pgn) ? load960Pgn(entry.pgn) : (() => { const c = new Chess(); c.loadPgn(entry.pgn); return c; })();
       return { positions: positionsOf(g), headers: { white: entry.white || W, black: entry.black || B }, loadError: null };
     } catch (e) {
       return { positions: positionsOf(new Chess()), headers: { white: W, black: B }, loadError: String(e?.message || e) };
@@ -209,7 +209,7 @@ export default function Analysis({ gameId, onOpenGame }) {
   }
 
   function onMove(m) {
-    const g = new Chess(shownFen);
+    const g = loadAnyFen(shownFen); // Chess960 positions keep 960 castling
     let moved;
     try { moved = g.move(m); } catch { return; }
     playMoveSound({ capture: Boolean(moved.captured) });
@@ -290,7 +290,7 @@ export default function Analysis({ gameId, onOpenGame }) {
     if (!text) return;
     // a lone FEN opens as a free-analysis position
     try {
-      const g = new Chess(text);
+      const g = loadAnyFen(text);
       setVariation({ basePly: 0, fens: [positions[0].fen, g.fen()], sans: [t('analysis.positionToken')], lastMove: null });
       setImportMsg(t('analysis.positionLoaded'));
       setPgnText('');

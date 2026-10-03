@@ -11,6 +11,7 @@ import { openingName } from '../openings.js';
 import { resetCoachChat } from '../coachChat.js';
 import { useClocks, TIME_CONTROLS, migrateTimeControl, formatClock } from '../hooks/useClocks.js';
 import { saveGame, updateRating, getRating, suggestedLevel } from '../library.js';
+import { Chess960Game, randomStartIndex, loadFen as loadAnyFen } from '../chess960.js';
 import { gameFromHistory, playMove, drawReason, capturedFromHistory, isValidHistory, spokenSan } from '../gameUtils.js';
 import { t, useT, useLang } from '../i18n.js';
 
@@ -23,6 +24,7 @@ const PIECE_SET_KEY = 'maestro-pieces';
 const COORDS_KEY = 'maestro-show-coords';
 const BLINDFOLD_KEY = 'maestro-blindfold';
 const CUSTOM_ELO_KEY = 'maestro-custom-elo';
+const VARIANT_KEY = 'maestro-variant';
 const STALE_SAVE_MS = 14 * 24 * 60 * 60 * 1000; // discard saved games older than 14 days
 
 function loadResults() {
@@ -111,10 +113,11 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     return DIFFICULTIES.find(d => d.id === saved?.difficultyId) || DIFFICULTIES[2];
   });
   const [color, setColor] = useState(saved?.color === 'b' ? 'b' : 'w');
+  const [variant, setVariant] = useState(() => (localStorage.getItem(VARIANT_KEY) === 'chess960' ? 'chess960' : 'standard'));
   const [game, setGame] = useState(() => {
     // replay the saved history so repetition tracking survives a reload
     if (isValidHistory(saved?.history)) return gameFromHistory(saved.history);
-    try { return saved?.fen ? new Chess(saved.fen) : new Chess(); } catch { return new Chess(); }
+    try { return saved?.fen ? loadAnyFen(saved.fen) : new Chess(); } catch { return new Chess(); }
   });
   const [lastMove, setLastMove] = useState(saved?.lastMove || null);
   // one entry per position: entry 0 is the initial position, each move appends
@@ -164,7 +167,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   const [results, setResults] = useState(loadResults);
   // saves from before this flag existed: a finished position was already counted
   const resultRecorded = useRef(Boolean(saved?.recorded) || (() => {
-    try { return Boolean(saved?.fen) && new Chess(saved.fen).isGameOver(); } catch { return false; }
+    try { return Boolean(saved?.fen) && loadAnyFen(saved.fen).isGameOver(); } catch { return false; }
   })());
   const [savedGameId, setSavedGameId] = useState(() => (saved?.recorded && saved.savedGameId) || null); // library id of the last finished game
   const [ratingChange, setRatingChange] = useState(null); // {rating, delta} after a rated game
@@ -373,7 +376,18 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     return g;
   }, [game, difficulty, color]);
 
-  function newGame(c = color, d = difficulty) {
+  /** Fresh game + history entry 0 for a variant (Chess960: random of the 960 starts). */
+  function makeStart(v = variant) {
+    if (v === 'chess960') {
+      const sp = randomStartIndex();
+      const g = Chess960Game.start(sp);
+      return { g, entry0: { fen: g.fen(), lastMove: null, variant: 'chess960', sp } };
+    }
+    const g = new Chess();
+    return { g, entry0: { fen: g.fen(), lastMove: null } };
+  }
+
+  function newGame(c = color, d = difficulty, v = variant) {
     gameId.current += 1;
     setPremove(null);
     resultRecorded.current = false;
@@ -383,12 +397,12 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     clearHint();
     setManualResult(null);
     resetClocks();
-    const g = new Chess();
+    const { g, entry0 } = makeStart(v);
     g.difficultyLabel = difficultyLabel(d);
     g.humanColor = c;
     setGame(g);
     setLastMove(null);
-    setHistory([{ fen: g.fen(), lastMove: null }]);
+    setHistory([entry0]);
     setViewIndex(null);
     setCaptured({ w: [], b: [] });
     setStatus('');
@@ -441,11 +455,11 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     lastCommentedPly.current = 0;
     watchSummarized.current = false;
     setWatchPaused(false);
-    const g = new Chess();
+    const { g, entry0 } = makeStart();
     setMode('watch');
     setGame(g);
     setLastMove(null);
-    setHistory([{ fen: g.fen(), lastMove: null }]);
+    setHistory([entry0]);
     setViewIndex(null);
     setCaptured({ w: [], b: [] });
     setStatus('');
@@ -517,11 +531,11 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   }
 
   // ---- online multiplayer (host is White and authoritative) ----
-  function resetBoardState(g) {
+  function resetBoardState(g, entry0 = { fen: g.fen(), lastMove: null }) {
     setPremove(null);
     setGame(g);
     setLastMove(null);
-    setHistory([{ fen: g.fen(), lastMove: null }]);
+    setHistory([entry0]);
     setViewIndex(null);
     setCaptured({ w: [], b: [] });
     setStatus('');
@@ -634,7 +648,14 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     setOnline((o) => ({ ...o, status: 'playing', role }));
     setMode('online');
     setColor(role === 'host' ? 'w' : 'b');
-    resetBoardState(new Chess());
+    if (role === 'host') {
+      // the host's variant setting decides; the guest gets it with the first sync
+      const { g, entry0 } = makeStart();
+      resetBoardState(g, entry0);
+      liveRef.current = { ...liveRef.current, mode: 'online', game: g, history: [entry0], captured: { w: [], b: [] }, lastMove: null };
+    } else {
+      resetBoardState(new Chess());
+    }
     myOfferRef.current = null;
     if (role === 'host') resetOnlineClocks();
   }
@@ -766,7 +787,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
       const from = bestmove.slice(0, 2);
       const to = bestmove.slice(2, 4);
       let san = '';
-      try { san = new Chess(game.fen()).move({ from, to, promotion: bestmove[4] }).san; } catch { /* keep empty */ }
+      try { san = loadAnyFen(game.fen()).move({ from, to, promotion: bestmove[4] }).san; } catch { /* keep empty */ }
       clearHint();
       setHintMove({ from, to });
       setStatus(t('play.status.hint', { move: san || from + '–' + to }));
@@ -813,10 +834,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   function buildPgn() {
     try {
       const hist = history?.length ? history : [{ fen: game.fen(), lastMove: null }];
-      const g = new Chess(hist[0].fen);
-      for (let k = 1; k < hist.length; k++) {
-        if (hist[k].lastMove?.san) g.move(hist[k].lastMove.san);
-      }
+      const g = gameFromHistory(hist); // also writes Variant/FEN headers for Chess960
       let result = '*';
       const mine = (o) => (o === 'd' ? '1/2-1/2' : (o === 'w') === (color === 'w') ? '1-0' : '0-1');
       if (onlineOver) result = mine(onlineOver === 'draw-agreed' ? 'd' : onlineOver.startsWith('win') ? 'w' : 'l');
@@ -846,7 +864,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     const fen = fenInput.trim();
     if (!fen) return;
     let g;
-    try { g = new Chess(fen); } catch {
+    try { g = loadAnyFen(fen); } catch { // Shredder-FEN castling loads as Chess960
       setStatus(t('play.status.invalidFen'));
       return;
     }
@@ -864,7 +882,8 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     setMode('play');
     setGame(g);
     setLastMove(null);
-    setHistory([{ fen: g.fen(), lastMove: null }]);
+    // custom start: not rated (the rating assumes normal starting positions)
+    setHistory([{ fen: g.fen(), lastMove: null, custom: true, ...(g instanceof Chess960Game ? { variant: 'chess960' } : {}) }]);
     setViewIndex(null);
     setCaptured({ w: [], b: [] });
     setStatus('');
@@ -1023,10 +1042,10 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     const role = online.role || onlineRef.current?.role;
     const over = !!onlineOver || game.isGameOver();
     if (role === 'host' && (accepted || over)) {
-      const g = new Chess();
-      const hist = [{ fen: g.fen(), lastMove: null }];
+      const { g, entry0 } = makeStart();
+      const hist = [entry0];
       myOfferRef.current = null;
-      resetBoardState(g);
+      resetBoardState(g, entry0);
       resetOnlineClocks();
       liveRef.current = { ...liveRef.current, game: g, history: hist, captured: { w: [], b: [] }, lastMove: null, onlineOver: null };
       sendPeer({ t: 'newgame', fen: g.fen(), history: hist, clocks: onlineClockSnapshot() });
@@ -1153,7 +1172,9 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
       timeControl: clk.tc.base ? clk.tc.label : null,
     });
     setSavedGameId(saved.id);
-    const fromStart = history?.[0]?.fen === new Chess().fen();
+    // rated only from a real start position (standard or a Chess960 start), never a loaded FEN
+    const h0 = history?.[0];
+    const fromStart = Boolean(h0) && !h0.custom && (h0.variant === 'chess960' || h0.fen === new Chess().fen());
     if (!online_ && fromStart) {
       const r = updateRating(difficulty.elo || 2850, outcome === 'w' ? 1 : outcome === 'd' ? 0.5 : 0);
       setRatingChange(r);
@@ -1207,8 +1228,10 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   const byWhite = [...captured.b].sort((a, b) => PIECE_VALUE[b] - PIECE_VALUE[a]);
   const byBlack = [...captured.w].sort((a, b) => PIECE_VALUE[b] - PIECE_VALUE[a]);
   const opening = useMemo(() => {
+    const h0 = history?.[0];
+    if (h0?.variant === 'chess960') return h0.sp != null ? t('play.variant.position', { n: h0.sp }) : t('play.variant.chess960');
     try { return openingName(game.history()); } catch { return null; }
-  }, [game]);
+  }, [game, history, t]);
   function stepPrev() {
     // no earlier position yet (fresh game): the ← key must not select index -1
     if ((history?.length || 0) < 2) return;
@@ -1307,6 +1330,23 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
               <option value="w">{t('common.white')}</option>
               <option value="b">{t('common.black')}</option>
             </select>
+            {mode !== 'online' && (
+              <select
+                className="toolbar-select"
+                aria-label={t('play.variant')}
+                title={t('play.variant')}
+                value={variant}
+                onChange={(e) => {
+                  const v = e.target.value === 'chess960' ? 'chess960' : 'standard';
+                  setVariant(v);
+                  try { localStorage.setItem(VARIANT_KEY, v); } catch { /* ignore */ }
+                  if (mode === 'watch') stopWatch(); else newGame(color, difficulty, v);
+                }}
+              >
+                <option value="standard">{t('play.variant.standard')}</option>
+                <option value="chess960">{t('play.variant.chess960')}</option>
+              </select>
+            )}
             {mode !== 'online' && (
               <select
                 className="toolbar-select"
@@ -1673,6 +1713,8 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
             </div>
           )}
           {mode === 'play' && opening && <div className="opening-tag">{opening}</div>}
+          {/* phones/tablets: the side panel (with its Share button) is hidden */}
+          <button type="button" className="mini share-inline" onClick={() => setShareOpen(true)} title={t('play.shareTitle')}>{t('play.shareBtn')}</button>
           <div className="captured-inline"><CapturedTray victims={byBlack} advantage={-whiteAdv} pieceColor="white" /></div>
           </>
           )}

@@ -1,6 +1,7 @@
 /* Stockfish wrapper: UCI protocol over a Web Worker.
    Singleton — analysis and move requests share one engine, serialized
    through a promise queue so only one search runs at a time. */
+import { isShredderFen } from './chess960.js';
 
 let worker = null;
 let readyPromise = null;
@@ -101,6 +102,8 @@ function runSearch({ fen, beforeGo, go, timeoutMs }) {
   return enqueue(async () => {
     await init();
     beforeGo?.();
+    // Shredder-FEN castling = a Chess960 position; castles then come back as king→rook
+    send(`setoption name UCI_Chess960 value ${isShredderFen(fen) ? 'true' : 'false'}`);
     send(`position fen ${fen}`);
     let release;
     const drained = new Promise((r) => { release = r; });

@@ -2,6 +2,7 @@
    Every finished game (vs engine or online) is saved with its PGN so it can
    be reviewed later; imported PGNs land here too. */
 import { Chess } from 'chess.js';
+import { isChess960Pgn, load960Pgn } from './chess960.js';
 
 const LIBRARY_KEY = 'maestro-library';
 const RATING_KEY = 'maestro-rating';
@@ -124,9 +125,10 @@ export function importPgn(text) {
   const chunks = splitPgn(text);
   let added = 0, errors = 0;
   for (const chunk of chunks.slice(0, 200)) {
-    const g = new Chess();
+    let g;
     try {
-      g.loadPgn(chunk);
+      if (isChess960Pgn(chunk)) g = load960Pgn(chunk);
+      else { g = new Chess(); g.loadPgn(chunk); }
     } catch {
       errors += 1;
       continue;
@@ -139,6 +141,7 @@ export function importPgn(text) {
       black: h.Black || 'Black',
       result: h.Result || '*',
       source: 'import',
+      ...(g.variant === 'chess960' ? { variant: 'chess960' } : {}),
       event: h.Event || '',
     });
     added += 1;

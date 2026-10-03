@@ -2,9 +2,11 @@
    Games are always copied WITH their move history (never rebuilt from a bare
    FEN) so chess.js can detect threefold repetition. */
 import { Chess } from 'chess.js';
+import { Chess960Game, loadFen } from './chess960.js';
 
 /** Copy a game including its full move history. */
 export function cloneGame(g) {
+  if (g instanceof Chess960Game) return g.clone();
   const moves = g.history({ verbose: true });
   const c = new Chess(moves.length ? moves[0].before : g.fen());
   for (const m of moves) c.move({ from: m.from, to: m.to, promotion: m.promotion });
@@ -19,7 +21,8 @@ export function cloneGame(g) {
 export function gameFromHistory(hist) {
   if (!Array.isArray(hist) || hist.length === 0) return new Chess();
   try {
-    const g = new Chess(hist[0].fen);
+    // entry 0 may carry the variant; Shredder-FEN castling also implies 960
+    const g = hist[0].variant === 'chess960' ? new Chess960Game(hist[0].fen) : loadFen(hist[0].fen);
     for (let k = 1; k < hist.length; k++) {
       const lm = hist[k]?.lastMove;
       if (!lm) throw new Error('missing move');
@@ -27,7 +30,7 @@ export function gameFromHistory(hist) {
     }
     return g;
   } catch {
-    try { return new Chess(hist[hist.length - 1].fen); } catch { return new Chess(); }
+    try { return loadFen(hist[hist.length - 1].fen); } catch { return new Chess(); }
   }
 }
 
@@ -48,7 +51,8 @@ export function playMove(g, move) {
   const next = cloneGame(g);
   let moved;
   try { moved = next.move(move); } catch { return null; }
-  const victim = findVictim(g, moved.from, moved.to);
+  // a 960 castle can land the king on its own rook's square: never a capture
+  const victim = moved.rookFrom ? null : findVictim(g, moved.from, moved.to);
   const lastMove = {
     from: moved.from, to: moved.to, san: moved.san, color: moved.color,
     piece: moved.piece, promotion: moved.promotion,
@@ -91,7 +95,7 @@ const SQUARE = /^[a-h][1-8]$/;
 /** Validate a history array received from a peer or storage. */
 export function isValidHistory(hist) {
   if (!Array.isArray(hist) || hist.length === 0 || hist.length > 1200) return false;
-  try { new Chess(hist[0].fen); } catch { return false; }
+  try { if (hist[0].variant === 'chess960') new Chess960Game(hist[0].fen); else loadFen(hist[0].fen); } catch { return false; }
   for (let k = 1; k < hist.length; k++) {
     const e = hist[k];
     if (!e || typeof e.fen !== 'string' || !e.lastMove) return false;

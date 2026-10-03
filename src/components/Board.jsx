@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
+import { loadFen } from '../chess960.js';
 import { useT } from '../i18n.js';
 
 export const GLYPHS = {
@@ -25,7 +26,7 @@ const FILES = 'abcdefgh';
 const RANKS = '87654321';
 
 function placementOf(fen) {
-  const g = new Chess(fen);
+  const g = loadFen(fen);
   const map = {};
   for (const f of FILES) {
     for (let r = 1; r <= 8; r++) {
@@ -113,6 +114,7 @@ function premoveTargets(fen, from) {
   try {
     const parts = fen.split(' ');
     parts[1] = parts[1] === 'w' ? 'b' : 'w';
+    parts[2] = '-'; // castling isn't premovable (and 960 rights aren't chess.js-readable)
     parts[3] = '-';
     const g = new Chess(parts.join(' '), { skipValidation: true });
     const map = {};
@@ -149,7 +151,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
   const [kbFocus, setKbFocus] = useState(null); // keyboard focus square
   const pendingRef = useRef(null); // {sq,x,y} pointer-down candidate
   const suppressClickRef = useRef(false);
-  const game = useMemo(() => new Chess(fen), [fen]);
+  const game = useMemo(() => loadFen(fen), [fen]); // chess.js, or the 960 wrapper
   const flip = orientation === 'b';
   // premove mode: it's the opponent's turn and the parent accepts queued moves
   const premoving = Boolean(onPremove && playerColor && game.turn() !== playerColor && !viewOnly);
@@ -228,6 +230,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
     const map = {};
     for (const m of game.moves({ square: selected, verbose: true })) {
       map[m.to] = m.promotion ? 'promo' : 'move';
+      if (m.rookFrom) map[m.rookFrom] = 'move'; // 960: castle by clicking the rook too
     }
     return map;
   }, [selected, fen, viewOnly, premoving]); // eslint-disable-line

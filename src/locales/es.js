@@ -502,4 +502,9 @@ export default {
   'openings.say.wrongAnswer': "No está en tu repertorio. La jugada es {san}",
   'openings.say.wrongRetry': "No está en tu repertorio. Inténtalo de nuevo",
   'openings.say.complete': "Línea completada: {ok} correctas, {bad} falladas",
+  // chess960
+  'play.variant': 'Variante',
+  'play.variant.standard': 'Estándar',
+  'play.variant.chess960': 'Ajedrez 960',
+  'play.variant.position': 'Ajedrez 960 · posición n.º {n}',
 };

@@ -502,4 +502,9 @@ export default {
   'openings.say.wrongAnswer': "Not in your repertoire. The move is {san}",
   'openings.say.wrongRetry': "Not in your repertoire. Try again",
   'openings.say.complete': "Line complete: {ok} correct, {bad} missed",
+  // chess960
+  'play.variant': 'Variant',
+  'play.variant.standard': 'Standard',
+  'play.variant.chess960': 'Chess960',
+  'play.variant.position': 'Chess960 · start #{n}',
 };
