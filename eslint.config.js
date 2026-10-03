@@ -26,8 +26,8 @@ export default [
     },
   },
   {
-    files: ['server/**/*.mjs', 'scripts/**/*.mjs', '*.config.js'],
-    languageOptions: { globals: { ...globals.node } },
+    files: ['server/**/*.mjs', 'scripts/**/*.mjs', '*.config.js', 'tests/**/*.js'],
+    languageOptions: { globals: { ...globals.node, ...globals.browser } },
   },
   {
     files: ['public/sw.js'],

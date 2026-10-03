@@ -4,6 +4,8 @@ import CoachPanel from './CoachPanel.jsx';
 const BUBBLE_KEY = 'maestro-coach-bubble-pos';
 const PANEL_KEY = 'maestro-coach-widget-panel-pos';
 const TAP_THRESHOLD = 6;
+// keep the bubble and panel clear of the phone's bottom tab bar
+const BOTTOM_BAR = 72;
 
 function clamp(v, min, max) { return Math.min(Math.max(v, min), max); }
 
@@ -21,12 +23,14 @@ function loadPos(key, fallback) {
  * bubble (without dragging it) opens the panel; dragging moves it.
  */
 export default function CoachWidget({ game, open, onOpen, onClose, panelRef }) {
-  const [bubblePos, setBubblePos] = useState(() => loadPos(BUBBLE_KEY, {
-    x: 16, y: Math.max(80, window.innerHeight - 150),
-  }));
+  const [bubblePos, setBubblePos] = useState(() => {
+    const p = loadPos(BUBBLE_KEY, { x: 16, y: Math.max(80, window.innerHeight - 150 - BOTTOM_BAR) });
+    // a position saved before the tab bar existed may sit underneath it
+    return { x: clamp(p.x, 8, window.innerWidth - 60), y: clamp(p.y, 8, window.innerHeight - 60 - BOTTOM_BAR) };
+  });
   const [panelPos, setPanelPos] = useState(() => {
     const width = Math.min(340, window.innerWidth - 32);
-    const height = Math.min(480, window.innerHeight - 140);
+    const height = Math.min(480, window.innerHeight - 140 - BOTTOM_BAR);
     return loadPos(PANEL_KEY, { x: (window.innerWidth - width) / 2, y: 90, width, height });
   });
 
@@ -40,15 +44,15 @@ export default function CoachWidget({ game, open, onOpen, onClose, panelRef }) {
   useEffect(() => {
     function onResize() {
       setBubblePos((p) => ({
-        x: clamp(p.x, 8, window.innerWidth - 60), y: clamp(p.y, 8, window.innerHeight - 60),
+        x: clamp(p.x, 8, window.innerWidth - 60), y: clamp(p.y, 8, window.innerHeight - 60 - BOTTOM_BAR),
       }));
       setPanelPos((p) => {
         const width = Math.min(p.width, window.innerWidth - 16);
-        const height = Math.min(p.height, window.innerHeight - 16);
+        const height = Math.min(p.height, window.innerHeight - 16 - BOTTOM_BAR);
         return {
           width, height,
           x: clamp(p.x, 8, Math.max(8, window.innerWidth - width - 8)),
-          y: clamp(p.y, 8, Math.max(8, window.innerHeight - height - 8)),
+          y: clamp(p.y, 8, Math.max(8, window.innerHeight - height - 8 - BOTTOM_BAR)),
         };
       });
     }
@@ -68,7 +72,7 @@ export default function CoachWidget({ game, open, onOpen, onClose, panelRef }) {
       if (Math.abs(dx) > TAP_THRESHOLD || Math.abs(dy) > TAP_THRESHOLD) moved = true;
       setBubblePos({
         x: clamp(orig.x + dx, 8, window.innerWidth - 60),
-        y: clamp(orig.y + dy, 8, window.innerHeight - 60),
+        y: clamp(orig.y + dy, 8, window.innerHeight - 60 - BOTTOM_BAR),
       });
     }
     function onUp() {
@@ -91,7 +95,7 @@ export default function CoachWidget({ game, open, onOpen, onClose, panelRef }) {
       setPanelPos((p) => ({
         ...p,
         x: clamp(orig.x + dx, 8, Math.max(8, window.innerWidth - p.width - 8)),
-        y: clamp(orig.y + dy, 8, Math.max(8, window.innerHeight - p.height - 8)),
+        y: clamp(orig.y + dy, 8, Math.max(8, window.innerHeight - p.height - 8 - BOTTOM_BAR)),
       }));
     }
     function onUp() {

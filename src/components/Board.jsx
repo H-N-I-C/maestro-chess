@@ -107,12 +107,40 @@ function MoveArrow({ from, to, flip, className = '' }) {
   );
 }
 
+/** Legal-looking targets for a premove: the position with the other side to move. */
+function premoveTargets(fen, from) {
+  try {
+    const parts = fen.split(' ');
+    parts[1] = parts[1] === 'w' ? 'b' : 'w';
+    parts[3] = '-';
+    const g = new Chess(parts.join(' '), { skipValidation: true });
+    const map = {};
+    for (const m of g.moves({ square: from, verbose: true })) map[m.to] = m.promotion ? 'promo' : 'move';
+    // pawns may premove-capture onto squares the opponent might move to
+    const p = g.get(from);
+    if (p?.type === 'p') {
+      const dir = p.color === 'w' ? 1 : -1;
+      const r = parseInt(from[1]) + dir;
+      for (const df of [-1, 1]) {
+        const f = FILES[FILES.indexOf(from[0]) + df];
+        if (f && r >= 1 && r <= 8) map[f + r] = r === 1 || r === 8 ? 'promo' : 'move';
+      }
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
 /**
  * Interactive board.
  * props: fen, orientation ('w'|'b'), onMove({from,to,promotion}), highlights {square: class},
- *        lastMove {from,to}, viewOnly, small
+ *        lastMove {from,to}, viewOnly, hint {from,to},
+ *        arrows [{from,to,kind}] — engine/review arrows (kind → .arrow-<kind>),
+ *        premove {from,to} + onPremove(move|null) + playerColor — queue a move while it's the opponent's turn.
+ * Right-click a square to circle it, right-drag to draw an arrow (cleared by a left click or a new position).
  */
-export default function Board({ fen, orientation = 'w', onMove, highlights = {}, lastMove, hint = null, pieceSet = 'classic', viewOnly = false, showCoords = true, blindfold = false, flashSquare = null }) {
+export default function Board({ fen, orientation = 'w', onMove, highlights = {}, lastMove, hint = null, arrows = [], pieceSet = 'classic', viewOnly = false, showCoords = true, blindfold = false, flashSquare = null, premove = null, onPremove = null, playerColor = null }) {
   const [selected, setSelected] = useState(null);
   const [promo, setPromo] = useState(null); // {from,to} awaiting promotion choice
   const [drag, setDrag] = useState(null); // {from,x,y} while dragging
@@ -121,6 +149,12 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
   const suppressClickRef = useRef(false);
   const game = useMemo(() => new Chess(fen), [fen]);
   const flip = orientation === 'b';
+  // premove mode: it's the opponent's turn and the parent accepts queued moves
+  const premoving = Boolean(onPremove && playerColor && game.turn() !== playerColor && !viewOnly);
+  const myTurnColor = premoving ? playerColor : game.turn();
+  const [marks, setMarks] = useState({ circles: [], arrows: [] }); // user annotations
+  const rightDownRef = useRef(null);
+  useEffect(() => { setMarks({ circles: [], arrows: [] }); }, [fen]);
 
   const [pieces, setPieces] = useState(() =>
     Object.entries(placementOf(fen)).map(([sq, p]) => ({
@@ -188,31 +222,63 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
 
   const legalTargets = useMemo(() => {
     if (!selected || viewOnly) return {};
+    if (premoving) return premoveTargets(fen, selected);
     const map = {};
     for (const m of game.moves({ square: selected, verbose: true })) {
       map[m.to] = m.promotion ? 'promo' : 'move';
     }
     return map;
-  }, [selected, fen, viewOnly]); // eslint-disable-line
+  }, [selected, fen, viewOnly, premoving]); // eslint-disable-line
+
+  /** Route a chosen move: a real move, or a queued premove. */
+  function submit(move) {
+    if (premoving) onPremove({ ...move, promotion: move.promotion || (legalTargets[move.to] === 'promo' ? 'q' : undefined) });
+    else onMove(move);
+  }
+
+  // ---- right-click annotations (laptop/desktop) ----
+  function onContextMenu(e) { e.preventDefault(); }
+  function onRightDown(e, sq) {
+    if (e.button !== 2) return;
+    rightDownRef.current = sq;
+  }
+  function onRightUp(e) {
+    if (e.button !== 2 || !rightDownRef.current) return;
+    const from = rightDownRef.current;
+    rightDownRef.current = null;
+    const el = document.elementFromPoint(e.clientX, e.clientY);
+    const to = el?.closest?.('[data-sq]')?.getAttribute('data-sq');
+    if (!to) return;
+    setMarks((m) => {
+      if (to === from) {
+        const has = m.circles.includes(from);
+        return { ...m, circles: has ? m.circles.filter((c) => c !== from) : [...m.circles, from] };
+      }
+      const has = m.arrows.some((a) => a.from === from && a.to === to);
+      return { ...m, arrows: has ? m.arrows.filter((a) => !(a.from === from && a.to === to)) : [...m.arrows, { from, to }] };
+    });
+  }
 
   function click(sq) {
     if (suppressClickRef.current) { suppressClickRef.current = false; return; }
+    if (marks.circles.length || marks.arrows.length) setMarks({ circles: [], arrows: [] });
     if (viewOnly) return;
     const piece = game.get(sq);
     if (selected) {
       if (sq === selected) { setSelected(null); return; }
       if (legalTargets[sq]) {
-        if (legalTargets[sq] === 'promo') {
+        if (legalTargets[sq] === 'promo' && !premoving) {
           setPromo({ from: selected, to: sq });
           return;
         }
-        onMove({ from: selected, to: sq });
+        submit({ from: selected, to: sq });
         setSelected(null);
         return;
       }
     }
     setPromo(null);
-    if (piece && piece.color === game.turn()) setSelected(sq);
+    if (premoving && premove) onPremove(null); // clicking elsewhere cancels a queued premove
+    if (piece && piece.color === myTurnColor) setSelected(sq);
     else setSelected(null);
   }
 
@@ -221,7 +287,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
     if (viewOnly || e.button !== 0) return;
     if (selected === sq || legalTargets[sq]) return; // let click handling deal with it
     const piece = game.get(sq);
-    if (!(piece && piece.color === game.turn())) return;
+    if (!(piece && piece.color === myTurnColor)) return;
     pendingRef.current = { sq, x: e.clientX, y: e.clientY };
     e.currentTarget.setPointerCapture?.(e.pointerId);
   }
@@ -249,8 +315,8 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
     const from = drag.from;
     setDrag(null);
     if (target && target !== from && legalTargets[target]) {
-      if (legalTargets[target] === 'promo') setPromo({ from, to: target });
-      else { onMove({ from, to: target }); setSelected(null); }
+      if (legalTargets[target] === 'promo' && !premoving) setPromo({ from, to: target });
+      else { submit({ from, to: target }); setSelected(null); }
     } else if (target === from) {
       setSelected(from); // dropped back on its own square = select
     } else {
@@ -272,6 +338,8 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
         aria-label="Chess board. Use arrow keys to move the focus square, Enter to select and move."
         tabIndex={0}
         onKeyDown={onBoardKeyDown}
+        onContextMenu={onContextMenu}
+        onPointerUp={onRightUp}
       >
         {ordered.map((sq) => {
           const isLight = (FILES.indexOf(sq[0]) + parseInt(sq[1])) % 2 === 1;
@@ -282,6 +350,8 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
           if (kbFocus === sq) cls.push('kb-focus');
           if (legalTargets[sq]) cls.push('target-' + legalTargets[sq]);
           if (highlights[sq]) cls.push(highlights[sq]);
+          if (premove && (sq === premove.from || sq === premove.to)) cls.push('premove');
+          if (marks.circles.includes(sq)) cls.push('marked');
           const occupant = game.get(sq);
           let label = sq;
           if (occupant) label += `, ${occupant.color === 'w' ? 'white' : 'black'} ${PIECE_NAMES[occupant.type]}`;
@@ -297,7 +367,7 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
               data-sq={sq}
               className={cls.join(' ')}
               onClick={() => click(sq)}
-              onPointerDown={(e) => onSqPointerDown(e, sq)}
+              onPointerDown={(e) => { onRightDown(e, sq); onSqPointerDown(e, sq); }}
               onPointerMove={(e) => onSqPointerMove(e, sq)}
               onPointerUp={(e) => onSqPointerUp(e, sq)}
               aria-label={label}
@@ -309,6 +379,8 @@ export default function Board({ fen, orientation = 'w', onMove, highlights = {},
         })}
         {!viewOnly && <MoveArrow from={lastMove?.from} to={lastMove?.to} flip={flip} />}
         {hint && <MoveArrow from={hint.from} to={hint.to} flip={flip} className="hint-arrow" />}
+        {arrows.map((a, i) => <MoveArrow key={`a${i}`} from={a.from} to={a.to} flip={flip} className={`arrow-${a.kind || 'best'}`} />)}
+        {marks.arrows.map((a, i) => <MoveArrow key={`m${i}`} from={a.from} to={a.to} flip={flip} className="arrow-user" />)}
         {promo && (() => {
           const pr = sqXY(promo.to, flip);
           const mover = game.turn();
