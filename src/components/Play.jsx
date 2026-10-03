@@ -11,7 +11,7 @@ import { openingName } from '../openings.js';
 import { resetCoachChat } from '../coachChat.js';
 import { useClocks, TIME_CONTROLS, migrateTimeControl, formatClock } from '../hooks/useClocks.js';
 import { saveGame, updateRating, getRating, suggestedLevel } from '../library.js';
-import { gameFromHistory, playMove, drawReason, capturedFromHistory, isValidHistory } from '../gameUtils.js';
+import { gameFromHistory, playMove, drawReason, capturedFromHistory, isValidHistory, spokenSan } from '../gameUtils.js';
 
 const COACH_OPEN_KEY = 'maestro-coach-open';
 const MOVES_OPEN_KEY = 'maestro-moves-open';
@@ -1444,7 +1444,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
             flashSquare={flashSquare}
           />
           <div className="sr-only" aria-live="polite">
-            {boardLastMove ? `${boardLastMove.color === 'w' ? 'White' : 'Black'} played ${boardLastMove.san}` : ''}
+            {boardLastMove ? `${boardLastMove.color === 'w' ? 'White' : 'Black'}: ${spokenSan(boardLastMove.san)}` : ''}
           </div>
           {!viewing && !game.isGameOver() && !onlineOver && !manualResult && !timeOver && game.isCheck() && (
             <div className="check-banner" role="alert">
@@ -1520,6 +1520,25 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
             <div className={`game-clock bottom${clocksActive && game.turn() === color ? ' running' : ''}${clk.clocks[color] < 20_000 ? ' low' : ''}`} aria-live="off">
               {formatClock(clk.clocks[color])}
             </div>
+          )}
+          {(history?.length || 0) > 1 && (
+            <ol className="move-strip" aria-label="Moves">
+              {history.slice(1).map((e, i) => {
+                const k = i + 1;
+                const active = (viewing ? viewIndex : history.length - 1) === k;
+                return (
+                  <li key={k}>
+                    {k % 2 === 1 && <span className="mv-num">{(k + 1) / 2}.</span>}
+                    <button
+                      type="button"
+                      className={`mv${active ? ' active' : ''}`}
+                      ref={active ? (el) => el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }) : undefined}
+                      onClick={() => setViewIndex(k === history.length - 1 ? null : k)}
+                    >{e.lastMove?.san}</button>
+                  </li>
+                );
+              })}
+            </ol>
           )}
           <div className="status-line">
             {viewing

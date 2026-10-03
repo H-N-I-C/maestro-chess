@@ -59,3 +59,14 @@ describe('gameUtils', () => {
     expect(isValidHistory([])).toBe(false);
   });
 });
+
+import { spokenSan } from '../src/gameUtils.js';
+describe('spokenSan', () => {
+  it('reads moves aloud', () => {
+    expect(spokenSan('Nxe5+')).toBe('knight takes e5, check');
+    expect(spokenSan('e4')).toBe('pawn to e4');
+    expect(spokenSan('exd8=Q#')).toBe('pawn from e takes d8 promotes to queen, checkmate');
+    expect(spokenSan('O-O-O')).toBe('castles queenside');
+    expect(spokenSan('Rad1')).toBe('rook from a to d1');
+  });
+});

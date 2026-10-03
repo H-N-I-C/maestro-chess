@@ -49,9 +49,15 @@ function knock(ac, { gain, at }) {
   src.start(at);
 }
 
-/** Play a move sound. capture = true for a heavier capture thud. */
+/** A short buzz on phones that support it (Android; iOS Safari ignores it). */
+function haptic(capture) {
+  try { navigator.vibrate?.(capture ? [14, 30, 14] : 12); } catch { /* unsupported */ }
+}
+
+/** Play a move sound (plus a haptic tick on touch devices). capture = true for a heavier capture thud. */
 export function playMoveSound({ capture = false } = {}) {
   if (muted) return;
+  if (typeof navigator !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches) haptic(capture);
   const ac = audioCtx();
   if (!ac) return;
   const t = ac.currentTime + 0.001;

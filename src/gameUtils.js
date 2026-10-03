@@ -87,3 +87,23 @@ export function isValidHistory(hist) {
   const g = gameFromHistory(hist);
   return g.history().length === hist.length - 1;
 }
+
+const SPOKEN_PIECE = { K: 'king', Q: 'queen', R: 'rook', B: 'bishop', N: 'knight' };
+
+/** SAN as a screen reader should say it: "Nxe5+" → "knight takes e5, check". */
+export function spokenSan(san) {
+  if (!san) return '';
+  if (san.startsWith('O-O-O')) return 'castles queenside' + (san.endsWith('#') ? ', checkmate' : san.endsWith('+') ? ', check' : '');
+  if (san.startsWith('O-O')) return 'castles kingside' + (san.endsWith('#') ? ', checkmate' : san.endsWith('+') ? ', check' : '');
+  const m = san.match(/^([KQRBN])?([a-h]?[1-8]?)(x)?([a-h][1-8])(?:=([QRBN]))?([+#])?$/);
+  if (!m) return san;
+  const [, piece, disamb, cap, to, promo, suffix] = m;
+  const parts = [piece ? SPOKEN_PIECE[piece] : 'pawn'];
+  if (disamb) parts.push(`from ${disamb}`);
+  parts.push(cap ? `takes ${to}` : `to ${to}`);
+  if (promo) parts.push(`promotes to ${SPOKEN_PIECE[promo]}`);
+  let out = parts.join(' ');
+  if (suffix === '#') out += ', checkmate';
+  else if (suffix === '+') out += ', check';
+  return out;
+}
