@@ -7,7 +7,7 @@ import {
   normalizePuzzle, solverColor, uciToMove, moveToUci, updateRating,
   selectPuzzle, scheduleReview, dueReviews, checkMove, humanizeTheme,
 } from '../puzzleEngine.js';
-import { useT } from '../i18n.js';
+import { useT, useLang } from '../i18n.js';
 import './puzzles.css';
 
 const STORE_KEY = 'maestro-puzzles';
@@ -47,6 +47,7 @@ function applyUci(fen, uci) {
 
 export default function Puzzles() {
   const t = useT();
+  const lang = useLang();
   const [puzzles, setPuzzles] = useState(null);
   const [loadError, setLoadError] = useState(false);
   const [store, setStore] = useState(loadStore);
@@ -344,7 +345,7 @@ export default function Puzzles() {
           {!wrong && status === 'play' && result && !result.won && <p className="pz-msg">{t('puzzles.noLongerCounts')}</p>}
           {finished && (
             <ul className="pz-themes" aria-label={t('puzzles.themes')}>
-              {themes.map((th) => <li key={th}>{humanizeTheme(th)}</li>)}
+              {themes.map((th) => <li key={th}>{humanizeTheme(th, lang)}</li>)}
             </ul>
           )}
         </div>

@@ -1,7 +1,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, useSyncExternalStore } from 'react';
 import { askCoach } from '../api.js';
 import {
-  subscribeCoachChat, getCoachChat, patchCoachChat, patchCoachMessages, resetCoachChat,
+  subscribeCoachChat, getCoachChat, patchCoachChat, patchCoachMessages, resetCoachChat, coachMessageText,
 } from '../coachChat.js';
 import { useT } from '../i18n.js';
 
@@ -28,7 +28,7 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
     patchCoachChat({ input: '', busy: true });
     const convo = getCoachChat().messages
       .filter((m) => m.role === 'user' || (m.role === 'coach' && !m.streaming && m.text))
-      .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: m.text }));
+      .map((m) => ({ role: m.role === 'user' ? 'user' : 'assistant', content: coachMessageText(m) }));
     convo.push({ role: 'user', content });
     patchCoachMessages((ms) => [...ms, { role: 'user', text: content }]);
     const sid = ++streamIdCounter;
@@ -75,7 +75,7 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
   async function exportChat() {
     const text = messages
       .filter((m) => !m.streaming && m.text)
-      .map((m) => `${m.role === 'user' ? t('coach.you') : 'Maestro'}: ${m.text}`)
+      .map((m) => `${m.role === 'user' ? t('coach.you') : 'Maestro'}: ${coachMessageText(m)}`)
       .join('\n');
     try {
       await navigator.clipboard.writeText(text);
@@ -141,7 +141,7 @@ function CoachPanel({ game, disabled, onCollapse, onHeaderPointerDown }, ref) {
               <span className="typing-dots" aria-hidden="true"><span /><span /><span /></span>
             ) : (
               <>
-                {m.text}
+                {coachMessageText(m)}
                 {m.dropped && <span className="stream-dropped"> {t('coach.dropped')}</span>}
               </>
             )}

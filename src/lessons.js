@@ -3,6 +3,8 @@
    { id, stage, title, intro, demoFen, demoNote, puzzles:[{fen, prompt, accept:[SAN], hint}], coachFocus }
    Puzzles are validated by SAN match against `accept`. */
 
+import { STAGES_ES, LESSONS_ES, PUZZLES_ES } from './locales/lessons.es.js';
+
 export const STAGES = [
   { id: 'tactics-1', num: 1, title: 'Tactics I — Striking Patterns', blurb: 'The mating patterns and double attacks that win games outright.' },
   { id: 'openings', num: 2, title: 'Openings — Sound Starts', blurb: 'Principles over memorization: build a complete, honest repertoire.' },
@@ -267,4 +269,30 @@ export const LESSONS = [
 
 export function lessonsForStage(stageId) {
   return LESSONS.filter((l) => l.stage === stageId);
+}
+
+/* ---------- localisation (text only; fens/moves never change) ---------- */
+
+const LESSON_TEXT = { es: { stages: STAGES_ES, lessons: LESSONS_ES, puzzles: PUZZLES_ES } };
+
+/** Stable id of a lesson puzzle (also the solved-progress id). */
+export function puzzleId(lessonId, index) {
+  return `${lessonId}:${index}`;
+}
+
+export function localizeStage(stage, lang) {
+  const tr = LESSON_TEXT[lang]?.stages[stage.id];
+  return tr ? { ...stage, ...tr } : stage;
+}
+
+/** Returns a copy of `lesson` with text in `lang` (English fallback per field). */
+export function localizeLesson(lesson, lang) {
+  const pack = LESSON_TEXT[lang];
+  if (!pack) return lesson;
+  const tr = pack.lessons[lesson.id] || {};
+  return {
+    ...lesson,
+    ...tr,
+    puzzles: lesson.puzzles.map((p, i) => ({ ...p, ...(pack.puzzles[puzzleId(lesson.id, i)] || {}) })),
+  };
 }

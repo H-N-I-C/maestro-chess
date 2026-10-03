@@ -1,10 +1,24 @@
 /* Coach chat state lives outside React so it survives the panel being
    collapsed/unmounted (desktop dock, mobile widget, tab switches). */
 
+import { t } from './i18n.js';
+
+/* The greeting is stored as { role: 'coach', greeting: true, text: COACH_GREETING }:
+   `text` stays the English original (stable identity for trimming and a fallback),
+   while the UI shows coachMessageText(m), i.e. t('coach.greeting') in the current language. */
 export const COACH_GREETING = `I'm Maestro, your chess coach. I watch your games live — ask me anything: "what's my plan?", "why was that move bad?", or "quiz me on pins".`;
 
+export const greetingMessage = () => ({ role: 'coach', greeting: true, text: COACH_GREETING });
+
+export const isGreeting = (m) => Boolean(m && m.role === 'coach' && (m.greeting || m.text === COACH_GREETING));
+
+/** Text to display for a chat message (the greeting is translated at display time). */
+export function coachMessageText(m) {
+  return isGreeting(m) ? t('coach.greeting') : m.text;
+}
+
 let state = {
-  messages: [{ role: 'coach', text: COACH_GREETING }],
+  messages: [greetingMessage()],
   input: '',
   busy: false,
   live: null, // null | 'live' | 'offline'
@@ -33,7 +47,7 @@ export function patchCoachMessages(fn) {
   let messages = fn(state.messages);
   if (messages.length > MAX_MESSAGES) {
     // keep the greeting if it still heads the list, trim the oldest middle
-    const head = messages[0]?.text === COACH_GREETING ? [messages[0]] : [];
+    const head = isGreeting(messages[0]) ? [messages[0]] : [];
     messages = head.concat(messages.slice(messages.length - (MAX_MESSAGES - head.length)));
   }
   patchCoachChat({ messages });
@@ -41,7 +55,7 @@ export function patchCoachMessages(fn) {
 
 export function resetCoachChat() {
   patchCoachChat({
-    messages: [{ role: 'coach', text: COACH_GREETING }],
+    messages: [greetingMessage()],
     input: '',
     busy: false,
     live: null,

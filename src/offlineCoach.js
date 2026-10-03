@@ -3,17 +3,18 @@
 
 import { Chess } from 'chess.js';
 import { analyze } from './engine.js';
+import { t } from './i18n.js';
 
 const PIECE_VALUES = { p: 1, n: 3, b: 3, r: 5, q: 9, k: 0 };
 
 function describeEval(cp, side) {
   const pawns = Math.abs(cp) / 100;
-  if (pawns < 0.3) return 'roughly equal';
+  if (pawns < 0.3) return t('offlineCoach.eval.equal');
   const betterSide = cp > 0 ? side : (side === 'w' ? 'b' : 'w');
-  const who = betterSide === 'w' ? 'White' : 'Black';
-  if (pawns < 1) return `slightly better for ${who}`;
-  if (pawns < 2.5) return `better for ${who} (~${Math.round(pawns)} pawns)`;
-  return `clearly winning for ${who}`;
+  const who = t(`offlineCoach.side.${betterSide}`);
+  if (pawns < 1) return t('offlineCoach.eval.slight', { side: who });
+  if (pawns < 2.5) return t('offlineCoach.eval.better', { side: who, count: Math.round(pawns) });
+  return t('offlineCoach.eval.winning', { side: who });
 }
 
 /** Simple attack/defender audit: find pieces attacked more than defended. */
@@ -30,8 +31,9 @@ function hangingPieces(fen) {
       const attackers = g.attackers(square, enemy).length;
       const defenders = g.attackers(square, p.color).length;
       if (attackers > defenders && PIECE_VALUES[p.type] >= 3 && attackers > 0) {
-        const name = p.type === 'n' ? 'knight' : p.type === 'b' ? 'bishop' : p.type === 'r' ? 'rook' : 'queen';
-        report.push(`${p.color === 'w' ? 'White' : 'Black'}'s ${name} on ${square} is attacked ${attackers}× and defended only ${defenders}×`);
+        report.push(t('offlineCoach.hanging', {
+          side: t(`offlineCoach.owner.${p.color}`), piece: t(`offlineCoach.piece.${p.type}`), square, attackers, defenders,
+        }));
       }
     }
   }
@@ -53,26 +55,26 @@ export async function offlineCoachReply({ fen, pgn, message, stage }) {
     analyze(fen, { depth: 6, movetime: 200 }),
   ]);
 
-  lines.push(`Looking at the position: it's ${describeEval(after.cp ?? 0, side)}.`);
+  lines.push(t('offlineCoach.looking', { eval: describeEval(after.cp ?? 0, side) }));
 
   if (before && before.cpBefore != null && after.cp != null) {
     // swing from perspective of the side that just moved
     const movedSide = side === 'w' ? 'b' : 'w';
     const theirSwing = (after.cp - before.cpBefore) * (movedSide === 'w' ? 1 : -1);
-    if (theirSwing < -120) lines.push(`Your last move lost roughly ${Math.round(-theirSwing / 100)} pawn-units. The engine preferred ${before.best} — replay it and compare the ideas.`);
-    else if (theirSwing > 120) lines.push(`Good move! You gained roughly ${Math.round(theirSwing / 100)} pawn-units over the alternative.`);
+    if (theirSwing < -120) lines.push(t('offlineCoach.lost', { count: Math.round(-theirSwing / 100), best: before.best }));
+    else if (theirSwing > 120) lines.push(t('offlineCoach.gained', { count: Math.round(theirSwing / 100) }));
   }
 
-  if (after.bestmove) lines.push(`Engine's suggestion right now: ${after.bestmove}.`);
+  if (after.bestmove) lines.push(t('offlineCoach.suggestion', { move: after.bestmove }));
 
   const hanging = hangingPieces(fen);
-  if (hanging.length) lines.push(`Tactical alert: ${hanging[0]}${hanging.length > 1 ? ` (also: ${hanging[1]})` : ''}.`);
+  if (hanging.length) lines.push(hanging.length > 1 ? t('offlineCoach.alertTwo', { first: hanging[0], second: hanging[1] }) : t('offlineCoach.alert', { first: hanging[0] }));
 
   if (wantsConcept) {
-    if (stage) lines.push(`You're working on "${stage}". Tie this position back to it: ask yourself what that stage's core idea would prescribe here.`);
-    lines.push('Tip: I\'m the offline coach (no AI key configured on the server). Add COACH_API_KEY to the container for full conversation.');
+    if (stage) lines.push(t('offlineCoach.stage', { stage }));
+    lines.push(t('offlineCoach.tip'));
   } else if (q) {
-    lines.push(`(Offline coach: I can't discuss "${message}" freely — my replies are position analysis. Add an API key for the full AI coach.)`);
+    lines.push(t('offlineCoach.cantDiscuss', { message }));
   }
 
   return lines.join('\n\n');

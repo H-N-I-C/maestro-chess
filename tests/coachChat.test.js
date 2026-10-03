@@ -12,7 +12,7 @@ describe('coachChat', () => {
 
   it('starts with the greeting as the only message', () => {
     const { messages } = getCoachChat();
-    expect(messages).toEqual([{ role: 'coach', text: COACH_GREETING }]);
+    expect(messages).toEqual([{ role: 'coach', greeting: true, text: COACH_GREETING }]);
   });
 
   it('trims to 200 messages when patching in more, keeping the greeting first', () => {
@@ -36,7 +36,7 @@ describe('coachChat', () => {
     patchCoachMessages((ms) => [...ms, { role: 'user', text: 'q' }]);
     resetCoachChat();
     const state = getCoachChat();
-    expect(state.messages).toEqual([{ role: 'coach', text: COACH_GREETING }]);
+    expect(state.messages).toEqual([{ role: 'coach', greeting: true, text: COACH_GREETING }]);
     expect(state.input).toBe('');
     expect(state.busy).toBe(false);
     expect(state.live).toBe(null);

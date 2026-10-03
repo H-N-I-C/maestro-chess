@@ -7,7 +7,8 @@ import {
   replay, lookup, addLine, removeLine, hasLine, emptyRepertoire, mergeRepertoire, STARTERS,
   turnAfter, nextMoves, pickOpponentMove, cardId, review, dueLineCount,
 } from '../openingTrainer.js';
-import { useT } from '../i18n.js';
+import { useT, useLang } from '../i18n.js';
+import { localizeOpening } from '../locales/openings.es.js';
 import './openings.css';
 
 const REP_KEY = 'maestro-repertoire';
@@ -59,6 +60,16 @@ function MoveList({ sans, cursor, onJump }) {
 
 export default function Openings() {
   const t = useT();
+  const lang = useLang();
+  // lookup() with opening names/ideas in the UI language
+  const lookupL = useCallback((sans) => {
+    const r = lookup(sans);
+    return {
+      ...r,
+      opening: localizeOpening(r.opening, lang),
+      continuations: r.continuations.map((c) => (c.name ? localizeOpening(c, lang) : c)),
+    };
+  }, [lang]);
   const colorName = (c) => t(c === 'w' ? 'common.white' : 'common.black');
   const [mode, setMode] = useState('explore');
   const [rep, setRep] = useState(() => {
@@ -78,7 +89,7 @@ export default function Openings() {
   const shown = useMemo(() => line.slice(0, cursor), [line, cursor]);
   const exploreFens = useMemo(() => replay(shown)?.fens || [new Chess().fen()], [shown]);
   const exploreFen = exploreFens[exploreFens.length - 1];
-  const info = useMemo(() => lookup(shown), [shown]);
+  const info = useMemo(() => lookupL(shown), [shown, lookupL]);
   const lastMove = useMemo(() => (shown.length ? squaresOf(exploreFens[exploreFens.length - 2], shown[shown.length - 1]) : null), [shown, exploreFens]);
 
   const playExplore = useCallback((san, capture) => {
@@ -209,7 +220,7 @@ export default function Openings() {
     return { from: s.from, to: s.to };
   }, [drill, drillFens]);
 
-  const drillInfo = drill ? lookup(drill.sans) : null;
+  const drillInfo = drill ? lookupL(drill.sans) : null;
   const userTurn = drill && !drill.done && turnAfter(drill.sans) === drillColor;
   const repCount = rep[drillColor].length;
 
@@ -318,7 +329,7 @@ export default function Openings() {
                   {rep[c].length === 0 && <p className="op-muted">{t('openings.noLines')}</p>}
                   <ul>
                     {rep[c].map((l) => {
-                      const nm = lookup(l).opening?.name || openingName(l) || t('openings.customLine');
+                      const nm = lookupL(l).opening?.name || openingName(l) || t('openings.customLine');
                       return (
                         <li key={l.join(' ')} className="op-rep-line">
                           <div>

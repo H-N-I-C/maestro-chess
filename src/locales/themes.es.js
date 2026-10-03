@@ -1,0 +1,27 @@
+/* Spanish names for Lichess puzzle themes (see humanizeTheme in src/puzzleEngine.js).
+   Unknown themes fall back to the English humanized name. */
+export const THEME_NAMES_ES = {
+  mate: 'jaque mate', mateIn1: 'mate en 1', mateIn2: 'mate en 2', mateIn3: 'mate en 3', mateIn4: 'mate en 4', mateIn5: 'mate en 5+',
+  oneMove: 'una jugada', short: 'corto', long: 'largo', veryLong: 'muy largo',
+  crushing: 'aplastante', advantage: 'ventaja', equality: 'igualdad',
+  opening: 'apertura', middlegame: 'medio juego', endgame: 'final',
+  pawnEndgame: 'final de peones', rookEndgame: 'final de torres', bishopEndgame: 'final de alfiles',
+  knightEndgame: 'final de caballos', queenEndgame: 'final de damas', queenRookEndgame: 'final de dama y torre',
+  fork: 'ataque doble', pin: 'clavada', skewer: 'enfilada', sacrifice: 'sacrificio',
+  deflection: 'desviación', attraction: 'atracción', clearance: 'despeje', interference: 'interferencia',
+  intermezzo: 'jugada intermedia', zugzwang: 'zugzwang', promotion: 'coronación', underPromotion: 'subpromoción',
+  castling: 'enroque', enPassant: 'captura al paso',
+  backRankMate: 'mate del pasillo', smotheredMate: 'mate de la coz', hangingPiece: 'pieza colgada',
+  discoveredAttack: 'ataque a la descubierta', discoveredCheck: 'jaque a la descubierta', doubleCheck: 'jaque doble',
+  kingsideAttack: 'ataque en el flanco de rey', queensideAttack: 'ataque en el flanco de dama', exposedKing: 'rey expuesto',
+  trappedPiece: 'pieza atrapada', advancedPawn: 'peón avanzado', xRayAttack: 'rayos X',
+  quietMove: 'jugada tranquila', defensiveMove: 'jugada defensiva', capturingDefender: 'captura del defensor',
+  attackingF2F7: 'ataque a f2/f7', collinearMove: 'jugada colineal',
+  master: 'partida de maestro', masterVsMaster: 'maestro contra maestro', superGM: 'súper GM',
+  arabianMate: 'mate árabe', anastasiaMate: 'mate de Anastasia', bodenMate: 'mate de Boden',
+  pillsburysMate: 'mate de Pillsbury', cornerMate: 'mate en la esquina', doubleBishopMate: 'mate de los dos alfiles',
+  killBoxMate: 'mate de la caja', epauletteMate: 'mate de las charreteras', hookMate: 'mate del gancho',
+  blindSwineMate: 'mate de los cerdos ciegos', operaMate: 'mate de la ópera', dovetailMate: 'mate de la cola de paloma',
+  vukovicMate: 'mate de Vuković', triangleMate: 'mate del triángulo', balestraMate: 'mate de la balestra',
+  morphysMate: 'mate de Morphy', swallowstailMate: 'mate de la cola de golondrina',
+};
