@@ -9,6 +9,8 @@ import { playMoveSound } from '../sound.js';
 import { hostGame, joinGame, makeCode } from '../online.js';
 import { openingName } from '../openings.js';
 import { resetCoachChat } from '../coachChat.js';
+import { useClocks, TIME_CONTROLS, migrateTimeControl, formatClock } from '../hooks/useClocks.js';
+import { gameFromHistory, playMove, drawReason, capturedFromHistory, isValidHistory } from '../gameUtils.js';
 
 const COACH_OPEN_KEY = 'maestro-coach-open';
 const MOVES_OPEN_KEY = 'maestro-moves-open';
@@ -19,7 +21,6 @@ const PIECE_SET_KEY = 'maestro-pieces';
 const COORDS_KEY = 'maestro-show-coords';
 const BLINDFOLD_KEY = 'maestro-blindfold';
 const CUSTOM_ELO_KEY = 'maestro-custom-elo';
-const CLOCK_OPTIONS = [0, 5, 10, 15]; // minutes; 0 = off
 const STALE_SAVE_MS = 14 * 24 * 60 * 60 * 1000; // discard saved games older than 14 days
 
 function loadResults() {
@@ -65,13 +66,6 @@ function loadSavedOnline() {
   try { return JSON.parse(localStorage.getItem(ONLINE_SAVE_KEY)); } catch { return null; }
 }
 
-function formatClock(ms) {
-  const total = Math.max(0, Math.ceil(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${String(s).padStart(2, '0')}`;
-}
-
 /** Human-readable versions of PeerJS error types. */
 function onlineErrorText(e) {
   const type = typeof e === 'string' ? e : e?.type;
@@ -83,15 +77,6 @@ function onlineErrorText(e) {
     case 'server-error': return 'The matchmaking server is unavailable — try again in a moment.';
     default: return `Connection failed (${type || 'unknown error'}).`;
   }
-}
-
-/** Piece that a move from->to will capture (handles en passant). */
-function findVictim(g, from, to) {
-  const direct = g.get(to);
-  if (direct) return direct;
-  const mover = g.get(from);
-  if (mover?.type === 'p' && from[0] !== to[0]) return g.get(to[0] + from[1]);
-  return null;
 }
 
 function CapturedTray({ victims, advantage, pieceColor }) {
@@ -118,6 +103,8 @@ export default function Play() {
   });
   const [color, setColor] = useState(saved?.color === 'b' ? 'b' : 'w');
   const [game, setGame] = useState(() => {
+    // replay the saved history so repetition tracking survives a reload
+    if (isValidHistory(saved?.history)) return gameFromHistory(saved.history);
     try { return saved?.fen ? new Chess(saved.fen) : new Chess(); } catch { return new Chess(); }
   });
   const [lastMove, setLastMove] = useState(saved?.lastMove || null);
@@ -162,24 +149,54 @@ export default function Play() {
   const [chatLog, setChatLog] = useState([]); // [{who:'me'|'opp', text}]
   const [chatInput, setChatInput] = useState('');
   const [menuOpen, setMenuOpen] = useState(false); // mobile game menu
-  const [onlineOver, setOnlineOver] = useState(null); // 'win'|'lose'|'draw'|'win-resign'|'lose-resign'|'draw-agreed'
+  const [onlineOver, setOnlineOver] = useState(null); // 'win-resign'|'lose-resign'|'win-time'|'lose-time'|'draw-agreed'
   const [pendingOffer, setPendingOffer] = useState(null); // {kind:'draw'|'takeback'} we received
   const [rejoin, setRejoin] = useState(savedOnline?.code ? savedOnline : null); // restorable online game
   const [results, setResults] = useState(loadResults);
   const resultRecorded = useRef(false);
   const onlineRef = useRef(null); // { peer, conn, role, prevColor }
+  const myOfferRef = useRef(null); // 'draw'|'takeback'|'newgame' we sent and await an answer to
 
-  // ---- game clocks (play mode vs engine only) ----
-  const [clockMinutes, setClockMinutes] = useState(() =>
-    CLOCK_OPTIONS.includes(saved?.clockMinutes) ? saved.clockMinutes : 0);
-  const clocksRef = useRef(
-    saved?.clockMinutes && saved?.clocks && Number.isFinite(saved.clocks.w) && Number.isFinite(saved.clocks.b)
-      ? { w: saved.clocks.w, b: saved.clocks.b }
-      : { w: 0, b: 0 }
-  );
-  const [, setClockTick] = useState(0);
-  const [timeOver, setTimeOver] = useState(null); // 'w' | 'b' flagged side
+  const [timeOver, setTimeOver] = useState(null); // 'w' | 'b' flagged side (vs engine)
   const [manualResult, setManualResult] = useState(null); // {outcome, title, detail}
+
+  // ---- game clocks (vs engine, and host-authoritative online) ----
+  const [clockId, setClockId] = useState(() => migrateTimeControl(saved));
+  const [onlineTc, setOnlineTc] = useState('off'); // time control the host chose (guest side)
+  const isGuest = mode === 'online' && online.role === 'guest';
+  const clocksActive = mode === 'play'
+    ? !game.isGameOver() && !manualResult && !timeOver && viewIndex === null
+    : mode === 'online' && online.status === 'playing' && !onlineOver && !game.isGameOver()
+      && (history?.length || 1) > 2; // online clocks start once both sides have moved
+  const clk = useClocks({
+    tcId: isGuest ? onlineTc : clockId,
+    initial: saved?.online ? null : saved?.clocks,
+    active: clocksActive,
+    turn: game.turn(),
+    onFlag: (side) => {
+      if (mode === 'play') setTimeOver(side);
+      else if (mode === 'online' && !isGuest) {
+        // the host's clock is authoritative and decides flagging
+        setOnlineOver(side === 'w' ? 'lose-time' : 'win-time');
+        sendPeer({ t: 'flag', side, clocks: onlineClockSnapshot() });
+      }
+    },
+    onPersist: (clocks) => {
+      if (mode !== 'play') return;
+      try {
+        const cur = JSON.parse(localStorage.getItem(GAME_SAVE_KEY));
+        if (cur) localStorage.setItem(GAME_SAVE_KEY, JSON.stringify({ ...cur, clocks }));
+      } catch { /* ignore */ }
+    },
+  });
+  const clocksOn = clk.tc.base > 0 && (mode === 'play' || mode === 'online');
+  function addIncrement(side) { if (mode !== 'watch') clk.addIncrement(side); }
+  function onlineClockSnapshot() { return { ...clk.snapshot(), tc: clockId }; }
+  function applyRemoteClocks(c) {
+    if (typeof c?.tc === 'string') setOnlineTc(c.tc);
+    clk.apply(c);
+  }
+  function resetOnlineClocks() { clk.reset(clockId); }
   const [hintMove, setHintMove] = useState(null); // {from,to,san}
   const hintBusyRef = useRef(false);
   const hintTimerRef = useRef(null);
@@ -216,7 +233,7 @@ export default function Play() {
 
   // live snapshot for connection handlers (they outlive any single render)
   const liveRef = useRef(null);
-  liveRef.current = { game, history, captured, lastMove, mode, online };
+  liveRef.current = { game, history, captured, lastMove, mode, online, onlineOver };
 
   useEffect(() => {
     localStorage.setItem(MOVES_OPEN_KEY, String(movesOpen));
@@ -272,7 +289,7 @@ export default function Play() {
       fen: game.fen(), lastMove, color, difficultyId: difficulty.id, history, captured,
       mode: mode === 'online' ? 'play' : mode,
       online: mode === 'online', // never resume an online game as an engine game
-      clockMinutes, clocks: { ...clocksRef.current }, savedAt: Date.now(),
+      clockId, clocks: clk.snapshot(), savedAt: Date.now(),
     }));
     if (mode === 'online' && online.code) {
       localStorage.setItem(ONLINE_SAVE_KEY, JSON.stringify({
@@ -280,37 +297,21 @@ export default function Play() {
         fen: game.fen(), history, captured, lastMove,
       }));
     }
-  }, [game, lastMove, color, difficulty, history, captured, mode, online, clockMinutes]);
+  }, [game, lastMove, color, difficulty, history, captured, mode, online, clockId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     try { localStorage.setItem(PIECE_SET_KEY, pieceSet); } catch { /* ignore */ }
   }, [pieceSet]);
 
-  function resetClocks(minutes = clockMinutes) {
-    const ms = (minutes || 0) * 60 * 1000;
-    clocksRef.current = { w: ms, b: ms };
+  function resetClocks(id = clockId) {
+    clk.reset(id);
     setTimeOver(null);
-    setClockTick((t) => t + 1);
   }
 
   function clearHint() {
     setHintMove(null);
     if (hintTimerRef.current) { clearTimeout(hintTimerRef.current); hintTimerRef.current = null; }
   }
-
-  // tick the clocks: only the side to move runs; paused while game is over,
-  // while reviewing old moves, or outside play-vs-engine mode
-  const clocksActive = mode === 'play' && clockMinutes > 0 && !game.isGameOver() && !manualResult && !timeOver && viewIndex === null;
-  useEffect(() => {
-    if (!clocksActive) return;
-    const id = setInterval(() => {
-      const side = game.turn();
-      clocksRef.current[side] = Math.max(0, clocksRef.current[side] - 150);
-      if (clocksRef.current[side] <= 0) setTimeOver(side);
-      setClockTick((t) => t + 1);
-    }, 150);
-    return () => clearInterval(id);
-  }, [clocksActive, game]);
 
   // if the saved position had the engine to move (e.g. player refreshed
   // while Maestro was thinking), let it reply now
@@ -377,26 +378,25 @@ export default function Play() {
       const mv = await bestMove(g.fen(), d);
       if (id !== gameId.current) return; // a new game started while searching
       clearHint();
-      setGame((prev) => {
-        const next = new Chess(prev.fen());
-        try {
-          const moved = next.move(mv);
-          const from = mv.slice(0, 2);
-          const to = mv.slice(2, 4);
-          const victim = findVictim(prev, from, to);
-          if (victim) setCaptured((c) => ({ ...c, [victim.color]: [...c[victim.color], victim.type] }));
-          playMoveSound({ capture: !!victim });
-          const lm = { from, to, san: moved.san, color: moved.color, piece: moved.piece };
-          setLastMove(lm);
-          setHistory((h) => [...(h || [{ fen: prev.fen(), lastMove: null }]), { fen: next.fen(), lastMove: lm, victim: victim || null }]);
-        } catch { /* illegal — ignore */ }
-        next.difficultyLabel = difficultyLabel(d);
-        next.humanColor = color;
-        return next;
-      });
+      // side effects stay outside state updaters (StrictMode runs those twice)
+      const prev = liveRef.current.game;
+      if (!mv || mv === '(none)' || prev.fen() !== g.fen()) return;
+      const r = playMove(prev, { from: mv.slice(0, 2), to: mv.slice(2, 4), promotion: mv[4] });
+      if (!r) return;
+      commitMove(prev, r);
     } finally {
       setThinking(false);
     }
+  }
+
+  /** Apply a played move to all board state (game, history, captures, clock increment). */
+  function commitMove(prev, { game: next, lastMove: lm, victim }) {
+    if (victim) setCaptured((c) => ({ ...c, [victim.color]: [...c[victim.color], victim.type] }));
+    playMoveSound({ capture: !!victim });
+    addIncrement(lm.color);
+    setGame(next);
+    setLastMove(lm);
+    setHistory((h) => [...(h || [{ fen: prev.fen(), lastMove: null }]), { fen: next.fen(), lastMove: lm, victim }]);
   }
 
   // ---- observe mode: engine vs engine ----
@@ -432,18 +432,15 @@ export default function Play() {
   // White opens with a random sensible developing move so no two watched
   // games start the same; Stockfish alone would be deterministic.
   function playRandomOpening() {
-    const g = new Chess(game.fen());
-    const choices = g.moves({ verbose: true }).filter((m) => {
+    const choices = game.moves({ verbose: true }).filter((m) => {
       if (m.promotion) return false;
       if (m.piece === 'p') return ['3', '4'].includes(m.to[1]) && m.from[1] === '2';
       return m.piece === 'n';
     });
-    const pool = choices.length ? choices : g.moves({ verbose: true });
-    const moved = g.move(pool[Math.floor(Math.random() * pool.length)]);
-    playMoveSound({});
-    setGame(g);
-    setLastMove({ from: moved.from, to: moved.to, san: moved.san, color: moved.color, piece: moved.piece });
-    setHistory((h) => [...(h || [{ fen: game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: { from: moved.from, to: moved.to, san: moved.san, color: moved.color, piece: moved.piece } }]);
+    const pool = choices.length ? choices : game.moves({ verbose: true });
+    const pick = pool[Math.floor(Math.random() * pool.length)];
+    const r = playMove(game, { from: pick.from, to: pick.to });
+    if (r) commitMove(game, r);
   }
 
   // one move in a watched game: random opening for White, engine otherwise
@@ -476,7 +473,6 @@ export default function Play() {
       const prompt = WATCH_PROMPTS[Math.floor(ply / 8) % WATCH_PROMPTS.length];
       coachRef.current?.comment(prompt);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, game, thinking, viewIndex, history]);
 
   // watch-mode transport controls
@@ -514,13 +510,15 @@ export default function Play() {
     setOnline({ status: 'idle', code: '', role: null, error: '' });
   }
 
-  function onlineCreate() {
-    const code = makeCode();
-    const peer = hostGame(code, {
+  /** Peer handlers for the host. They read live state through liveRef, so a
+      reconnecting guest is synced to the CURRENT position, not a stale one. */
+  function hostHandlers() {
+    return {
       onConnected: (conn) => {
         const cur = onlineRef.current;
+        if (!cur) { conn.close(); return; }
         // a game already has its player — reject extra connections
-        if (cur?.conn && cur.conn.open && cur.conn !== conn) {
+        if (cur.conn && cur.conn.open && cur.conn !== conn) {
           try { conn.send({ t: 'busy' }); } catch { /* ignore */ }
           conn.close();
           return;
@@ -528,10 +526,10 @@ export default function Play() {
         cur.conn = conn;
         setOppGone(false);
         const s = liveRef.current;
-        if (s.mode === 'online' && (s.history?.length || 1) > 1) {
+        if (s.mode === 'online') {
           // returning guest (reconnection) — keep the game, just sync
           hostSync(s.game.fen(), s.history, s.captured, s.lastMove);
-          setChatLog((c) => [...c, { who: 'sys', text: 'Your opponent reconnected.' }]);
+          if ((s.history?.length || 1) > 1) sysChat('Your opponent reconnected.');
         } else {
           beginOnlineGame('host');
         }
@@ -539,7 +537,12 @@ export default function Play() {
       onData: onlineHostData,
       onClose: () => setOppGone(true),
       onError: (e) => setOnline((o) => ({ ...o, status: o.status === 'playing' ? o.status : 'error', error: onlineErrorText(e) })),
-    });
+    };
+  }
+
+  function onlineCreate() {
+    const code = makeCode();
+    const peer = hostGame(code, hostHandlers());
     onlineRef.current = { ...(onlineRef.current || {}), peer, conn: null, role: 'host' };
     setOnline({ status: 'waiting', code, role: 'host', error: '' });
   }
@@ -568,10 +571,30 @@ export default function Play() {
     setMode('online');
     setColor(role === 'host' ? 'w' : 'b');
     resetBoardState(new Chess());
+    myOfferRef.current = null;
+    if (role === 'host') resetOnlineClocks();
   }
 
   function hostSync(fen, hist, caps, lm) {
-    onlineRef.current?.conn?.send({ t: 'state', fen, history: hist, captured: caps, lastMove: lm });
+    try {
+      onlineRef.current?.conn?.send({ t: 'state', fen, history: hist, captured: caps, lastMove: lm, clocks: onlineClockSnapshot() });
+    } catch { /* connection closing */ }
+  }
+
+  /** Host applies a validated move (its own or the guest's) and syncs it. */
+  function hostCommit(s, { game: g, lastMove: lm, victim }) {
+    const hist = [...(s.history || [{ fen: s.game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm, victim }];
+    const caps = victim
+      ? { ...s.captured, [victim.color]: [...s.captured[victim.color], victim.type] }
+      : s.captured;
+    playMoveSound({ capture: !!victim });
+    addIncrement(lm.color);
+    setGame(g);
+    setLastMove(lm);
+    setHistory(hist);
+    setCaptured(caps);
+    liveRef.current = { ...liveRef.current, game: g, history: hist, captured: caps, lastMove: lm };
+    hostSync(g.fen(), hist, caps, lm);
   }
 
   function onlineHostData(d) {
@@ -584,26 +607,19 @@ export default function Play() {
       return;
     }
     if (d.t === 'newgame-request') {
-      requestNewGame(true);
+      // never reset the host's game unasked: a finished game restarts at
+      // once, a game in progress needs the host to accept
+      if (s.onlineOver || s.game.isGameOver()) requestNewGame(true);
+      else setPendingOffer({ kind: 'newgame' });
       return;
     }
-    if (d.t === 'move' && s.mode === 'online') {
-      const g = new Chess(s.game.fen());
-      if (g.get(d.from)?.color !== 'b') return; // the guest only moves Black
-      let moved;
-      try { moved = g.move({ from: d.from, to: d.to, promotion: d.promotion }); } catch { return; }
-      const victim = findVictim(s.game, d.from, d.to);
-      const lm = { from: d.from, to: d.to, san: moved.san, color: moved.color, piece: moved.piece };
-      const hist = [...(s.history || [{ fen: s.game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm, victim: victim || null }];
-      const caps = victim
-        ? { ...s.captured, [victim.color]: [...s.captured[victim.color], victim.type] }
-        : s.captured;
-      playMoveSound({ capture: !!victim });
-      setGame(g);
-      setLastMove(lm);
-      setHistory(hist);
-      setCaptured(caps);
-      hostSync(g.fen(), hist, caps, lm);
+    if (d.t === 'move' && s.mode === 'online' && !s.onlineOver) {
+      // the guest only moves Black, and only on Black's turn
+      if (s.game.turn() !== 'b' || s.game.get(d.from)?.color !== 'b') return;
+      if (typeof d.from !== 'string' || typeof d.to !== 'string') return;
+      const r = playMove(s.game, { from: d.from, to: d.to, promotion: d.promotion });
+      if (!r) return;
+      hostCommit(s, r);
     }
   }
 
@@ -612,27 +628,31 @@ export default function Play() {
     if (d.t === 'chat') { setChatLog((c) => [...c.slice(-99), { who: 'opp', text: String(d.text).slice(0, 300) }]); return; }
     if (handleGameAction(d)) return;
     if (d.t === 'newgame') { guestNewGame(d); return; }
-    if (d.t === 'busy') { setOnline((o) => ({ ...o, status: 'error', error: 'That game already has two players.' })); return; }
-    if (d.t !== 'state') return;
-    const prev = liveRef.current.game;
-    const lm = d.lastMove;
-    if (lm) {
-      const victim = findVictim(prev, lm.from, lm.to);
-      playMoveSound({ capture: !!victim });
+    if (d.t === 'flag' && (d.side === 'w' || d.side === 'b')) {
+      if (d.clocks) applyRemoteClocks(d.clocks);
+      setOnlineOver(d.side === 'b' ? 'lose-time' : 'win-time');
+      return;
     }
-    try { setGame(new Chess(d.fen)); } catch { return; }
-    setHistory(d.history);
-    setCaptured(d.captured);
+    if (d.t === 'busy') { setOnline((o) => ({ ...o, status: 'error', error: 'That game already has two players.' })); return; }
+    if (d.t !== 'state' || !isValidHistory(d.history)) return;
+    const prev = liveRef.current;
+    const hist = d.history;
+    const lm = hist[hist.length - 1].lastMove || null;
+    if (lm && hist.length !== (prev.history?.length || 0)) {
+      playMoveSound({ capture: !!hist[hist.length - 1].victim });
+    }
+    setGame(gameFromHistory(hist));
+    setHistory(hist);
+    setCaptured(capturedFromHistory(hist));
     setLastMove(lm);
+    if (d.clocks) applyRemoteClocks(d.clocks);
   }
 
   function rebuildFromHistory(hist) {
     const last = hist[hist.length - 1];
-    try { setGame(new Chess(last.fen)); } catch { return; }
-    const caps = { w: [], b: [] };
-    for (const e of hist) if (e.victim) caps[e.victim.color].push(e.victim.type);
+    setGame(gameFromHistory(hist));
     setHistory(hist);
-    setCaptured(caps);
+    setCaptured(capturedFromHistory(hist));
     setLastMove(last.lastMove || null);
     setViewIndex(null);
     setStatus('');
@@ -641,6 +661,7 @@ export default function Play() {
   // single-player takeback: undo your last move and the engine's reply
   function singlePlayerTakeback() {
     if (mode !== 'play' || thinking || (history?.length || 1) < 2) return;
+    if (game.isGameOver() || manualResult || timeOver) return; // result already recorded
     const n = history.length >= 3 ? 2 : 1;
     clearHint();
     rebuildFromHistory(history.slice(0, history.length - n));
@@ -685,8 +706,11 @@ export default function Play() {
       // the engine's own evaluation of the position is the negation
       const { cp, mate } = await analyze(game.fen(), { depth: 10, movetime: 400 });
       if (id !== gameId.current) return;
-      const engineCp = game.turn() === color ? (cp === null ? null : -cp) : cp;
-      if (mate !== null && mate <= 0) { // engine is getting mated — accept
+      // scores are side-to-move POV: flip them when it's the player's move
+      const flip = game.turn() === color ? -1 : 1;
+      const engineCp = cp === null ? null : cp * flip;
+      const engineMate = mate === null ? null : mate * flip;
+      if (engineMate !== null && engineMate < 0) { // engine is getting mated — accept
         setManualResult({ outcome: 'd', title: 'Draw — Maestro accepts', detail: 'Maestro saw no way forward and took the draw.' });
       } else if (engineCp !== null && engineCp <= -150) {
         setManualResult({ outcome: 'd', title: 'Draw — Maestro accepts', detail: 'Maestro judged the position worse and took the draw.' });
@@ -707,12 +731,15 @@ export default function Play() {
         if (hist[k].lastMove?.san) g.move(hist[k].lastMove.san);
       }
       let result = '*';
-      if (manualResult) result = manualResult.outcome === 'w' ? '1-0' : manualResult.outcome === 'l' ? '0-1' : '1/2-1/2';
+      const mine = (o) => (o === 'd' ? '1/2-1/2' : (o === 'w') === (color === 'w') ? '1-0' : '0-1');
+      if (onlineOver) result = mine(onlineOver === 'draw-agreed' ? 'd' : onlineOver.startsWith('win') ? 'w' : 'l');
+      else if (manualResult) result = mine(manualResult.outcome);
       else if (timeOver) result = timeOver === 'w' ? '0-1' : '1-0';
       else if (game.isCheckmate()) result = game.turn() === 'w' ? '0-1' : '1-0';
       else if (game.isDraw()) result = '1/2-1/2';
-      const whiteName = mode === 'watch' ? 'White' : color === 'w' ? 'You' : 'Maestro';
-      const blackName = mode === 'watch' ? 'Black' : color === 'b' ? 'You' : 'Maestro';
+      const opp = mode === 'online' ? 'Opponent' : 'Maestro';
+      const whiteName = mode === 'watch' ? 'White' : color === 'w' ? 'You' : opp;
+      const blackName = mode === 'watch' ? 'Black' : color === 'b' ? 'You' : opp;
       g.header('Event', 'Maestro Chess', 'Date', new Date().toISOString().slice(0, 10).replace(/-/g, '.'), 'White', whiteName, 'Black', blackName, 'Result', result);
       return g.pgn();
     } catch { return ''; }
@@ -759,48 +786,94 @@ export default function Play() {
   // ---- online game actions ----
   function sysChat(text) { setChatLog((c) => [...c.slice(-99), { who: 'sys', text }]); }
 
-  function applyOnlineTakeback() {
-    const hist = liveRef.current.history;
-    if ((hist?.length || 1) >= 3) rebuildFromHistory(hist.slice(0, hist.length - 2));
+  function sendPeer(msg) {
+    try { onlineRef.current?.conn?.send(msg); } catch { /* connection closing */ }
+  }
+
+  /** Takebacks are applied by the host only and then synced, so both boards
+      always agree. Undoes the requester's last move (and the reply after it). */
+  function hostApplyTakeback(requester) {
+    const s = liveRef.current;
+    const hist = s.history || [];
+    if (hist.length < 2) return;
+    const lastMover = hist[hist.length - 1].lastMove?.color;
+    const n = lastMover === requester ? 1 : 2;
+    if (hist.length - n < 1) return;
+    const next = hist.slice(0, hist.length - n);
+    rebuildFromHistory(next);
+    const last = next[next.length - 1];
+    liveRef.current = { ...s, history: next, game: gameFromHistory(next) };
+    hostSync(last.fen, next, capturedFromHistory(next), last.lastMove || null);
+  }
+
+  function myColorOnline() {
+    return (online.role || onlineRef.current?.role) === 'host' ? 'w' : 'b';
   }
 
   function requestTakeback() {
-    if ((history?.length || 1) < 3) return;
-    onlineRef.current?.conn?.send({ t: 'takeback' });
+    if ((history?.length || 1) < 2 || myOfferRef.current) return;
+    myOfferRef.current = 'takeback';
+    sendPeer({ t: 'takeback' });
     sysChat('Takeback requested.');
   }
   function acceptTakeback() {
     setPendingOffer(null);
-    onlineRef.current?.conn?.send({ t: 'takeback-ok' });
-    applyOnlineTakeback();
+    sendPeer({ t: 'takeback-ok' });
+    // the opponent asked: undo THEIR last move
+    if (myColorOnline() === 'w') hostApplyTakeback('b');
   }
   function declineOffer() {
-    onlineRef.current?.conn?.send({ t: pendingOffer?.kind === 'draw' ? 'draw-no' : 'takeback-no' });
+    const kind = pendingOffer?.kind;
+    sendPeer({ t: `${kind}-no` });
     setPendingOffer(null);
   }
   function offerDraw() {
-    onlineRef.current?.conn?.send({ t: 'draw' });
+    if (myOfferRef.current) return;
+    myOfferRef.current = 'draw';
+    sendPeer({ t: 'draw' });
     sysChat('Draw offered.');
   }
   function acceptDraw() {
     setPendingOffer(null);
-    onlineRef.current?.conn?.send({ t: 'draw-ok' });
+    sendPeer({ t: 'draw-ok' });
     setOnlineOver('draw-agreed');
   }
+  function acceptNewGame() {
+    setPendingOffer(null);
+    requestNewGame(true);
+  }
   function resign() {
-    onlineRef.current?.conn?.send({ t: 'resign' });
+    sendPeer({ t: 'resign' });
     setOnlineOver('lose-resign');
   }
 
+  /** Offer/answer protocol. An '-ok' only counts when we actually made that
+      offer — otherwise a tampered peer could force draws or rewind moves. */
   function handleGameAction(d) {
-    if (d.t === 'takeback') { setPendingOffer({ kind: 'takeback' }); return true; }
-    if (d.t === 'takeback-ok') { applyOnlineTakeback(); sysChat('Takeback accepted.'); return true; }
-    if (d.t === 'takeback-no') { sysChat('Takeback declined.'); return true; }
-    if (d.t === 'draw') { setPendingOffer({ kind: 'draw' }); return true; }
-    if (d.t === 'draw-ok') { setOnlineOver('draw-agreed'); return true; }
-    if (d.t === 'draw-no') { sysChat('Draw offer declined.'); return true; }
-    if (d.t === 'resign') { setOnlineOver('win-resign'); return true; }
-    return false;
+    const over = liveRef.current.onlineOver;
+    const answer = (kind) => {
+      if (myOfferRef.current !== kind) return false;
+      myOfferRef.current = null;
+      return true;
+    };
+    switch (d.t) {
+      case 'takeback': if (!over) setPendingOffer({ kind: 'takeback' }); return true;
+      case 'draw': if (!over) setPendingOffer({ kind: 'draw' }); return true;
+      case 'takeback-ok':
+        if (answer('takeback')) {
+          if (myColorOnline() === 'w') hostApplyTakeback('w');
+          sysChat('Takeback accepted.');
+        }
+        return true;
+      case 'draw-ok':
+        if (answer('draw') && !over) setOnlineOver('draw-agreed');
+        return true;
+      case 'takeback-no': if (answer('takeback')) sysChat('Takeback declined.'); return true;
+      case 'draw-no': if (answer('draw')) sysChat('Draw offer declined.'); return true;
+      case 'newgame-no': if (answer('newgame')) sysChat('New game declined.'); return true;
+      case 'resign': if (!over) setOnlineOver('win-resign'); return true;
+      default: return false;
+    }
   }
 
   function sendChat() {
@@ -816,30 +889,15 @@ export default function Play() {
     setRejoin(null);
     onlineRef.current = { peer: null, conn: null, role: r.role, prevColor: color };
     if (r.role === 'host') {
-      const peer = hostGame(r.code, {
-        onConnected: (conn) => {
-          const cur = onlineRef.current;
-          if (cur?.conn && cur.conn.open && cur.conn !== conn) {
-            try { conn.send({ t: 'busy' }); } catch { /* ignore */ }
-            conn.close();
-            return;
-          }
-          cur.conn = conn;
-          setOppGone(false);
-          hostSync(game.fen(), history, captured, lastMove);
-        },
-        onData: onlineHostData,
-        onClose: () => setOppGone(true),
-        onError: (e) => setOnline((o) => ({ ...o, status: 'error', error: onlineErrorText(e) })),
-      });
-      onlineRef.current.peer = peer;
+      const hist = isValidHistory(r.history) ? r.history : [{ fen: new Chess().fen(), lastMove: null }];
+      const g = gameFromHistory(hist);
+      // set the live snapshot before the guest can connect
+      liveRef.current = { ...liveRef.current, mode: 'online', game: g, history: hist, captured: capturedFromHistory(hist), lastMove: hist[hist.length - 1].lastMove || null };
+      onlineRef.current.peer = hostGame(r.code, hostHandlers());
       setMode('online');
       setOnline({ status: 'playing', code: r.code, role: 'host', error: '' });
       setColor('w');
-      try { setGame(new Chess(r.fen)); } catch { /* fresh */ }
-      setHistory(r.history);
-      setCaptured(r.captured || { w: [], b: [] });
-      setLastMove(r.lastMove || null);
+      rebuildFromHistory(hist);
       setChatLog((c) => [...c, { who: 'sys', text: 'Game restored — waiting for your opponent to rejoin.' }]);
     } else {
       onlineJoin(r.code); // guest path re-syncs from the host
@@ -853,6 +911,7 @@ export default function Play() {
 
   function leaveOnline() {
     const prevColor = onlineRef.current?.prevColor || 'w';
+    myOfferRef.current = null;
     onlineRef.current?.peer?.destroy();
     onlineRef.current = null;
     localStorage.removeItem(ONLINE_SAVE_KEY);
@@ -867,44 +926,39 @@ export default function Play() {
     newGame(prevColor, difficulty);
   }
 
-  function requestNewGame(fromRemote = false) {
+  /** Online: the host starts the new game (directly once the game is over,
+      or when the guest's request was accepted); otherwise ask the opponent. */
+  function requestNewGame(accepted = false) {
     if (mode !== 'online') { newGame(); return; }
     const role = online.role || onlineRef.current?.role;
-    if (role === 'host' || fromRemote) {
+    const over = !!onlineOver || game.isGameOver();
+    if (role === 'host' && (accepted || over)) {
       const g = new Chess();
       const hist = [{ fen: g.fen(), lastMove: null }];
+      myOfferRef.current = null;
       resetBoardState(g);
-      onlineRef.current?.conn?.send({ t: 'newgame', fen: g.fen(), history: hist });
-    } else {
-      onlineRef.current?.conn?.send({ t: 'newgame-request' });
+      resetOnlineClocks();
+      liveRef.current = { ...liveRef.current, game: g, history: hist, captured: { w: [], b: [] }, lastMove: null, onlineOver: null };
+      sendPeer({ t: 'newgame', fen: g.fen(), history: hist, clocks: onlineClockSnapshot() });
+    } else if (!myOfferRef.current) {
+      myOfferRef.current = 'newgame';
+      sendPeer({ t: 'newgame-request' });
+      sysChat(over ? 'Rematch requested.' : 'New game requested.');
     }
   }
 
   function guestNewGame(d) {
-    try { setGame(new Chess(d.fen)); } catch { return; }
+    if (!isValidHistory(d.history)) return;
+    myOfferRef.current = null;
+    setGame(gameFromHistory(d.history));
     setHistory(d.history);
+    if (d.clocks) applyRemoteClocks(d.clocks);
     setCaptured({ w: [], b: [] });
     setLastMove(null);
     setViewIndex(null);
     setStatus('');
     setOnlineOver(null);
     setPendingOffer(null);
-  }
-
-  /** Why the game is a draw, with specifics (repetition / 50-move / stalemate / material). */
-  function drawReason(g) {
-    if (g.isStalemate()) return 'Draw — stalemate.';
-    if (g.isInsufficientMaterial()) return 'Draw — insufficient material.';
-    if (Number(g.fen().split(' ')[4]) >= 100) return 'Draw — fifty-move rule.';
-    // threefold: our game objects are rebuilt from FEN each ply, so count
-    // occurrences of the current position among the saved history fens
-    const base = g.fen().split(' ').slice(0, 4).join(' ');
-    let count = 1;
-    for (const e of history || []) {
-      if (e.fen.split(' ').slice(0, 4).join(' ') === base) count += 1;
-    }
-    if (count >= 3) return 'Draw — threefold repetition.';
-    return 'Draw.';
   }
 
   useEffect(() => {
@@ -973,8 +1027,8 @@ export default function Play() {
   // board position being terminal — tally those once, like the effect above
   useEffect(() => {
     if (!onlineOver) return;
-    const outcome = onlineOver === 'win-resign' ? 'w'
-      : onlineOver === 'lose-resign' ? 'l'
+    const outcome = onlineOver.startsWith('win') ? 'w'
+      : onlineOver.startsWith('lose') ? 'l'
       : onlineOver === 'draw-agreed' ? 'd'
       : null;
     if (!outcome || resultRecorded.current) return;
@@ -991,48 +1045,26 @@ export default function Play() {
     if (mode === 'watch') return;
     if (mode === 'online') {
       if (online.role === 'guest') {
-        onlineRef.current?.conn?.send({ t: 'move', from, to, promotion });
+        if (onlineOver || game.turn() !== 'b' || viewIndex !== null) return;
+        sendPeer({ t: 'move', from, to, promotion });
         return;
       }
       // host plays White locally, then syncs
-      if (thinking || game.isGameOver() || viewIndex !== null) return;
+      if (game.isGameOver() || onlineOver || viewIndex !== null) return;
       if (game.turn() !== 'w') return;
-      const g = new Chess(game.fen());
-      let moved;
-      try { moved = g.move({ from, to, promotion }); } catch { return; }
-      const victim = findVictim(game, from, to);
-      const lm = { from, to, san: moved.san, color: moved.color, piece: moved.piece };
-      const hist = [...(history || [{ fen: game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm, victim: victim || null }];
-      const caps = victim
-        ? { ...captured, [victim.color]: [...captured[victim.color], victim.type] }
-        : captured;
-      playMoveSound({ capture: !!victim });
-      setGame(g);
-      setLastMove(lm);
-      setHistory(hist);
-      setCaptured(caps);
-      hostSync(g.fen(), hist, caps, lm);
+      const r = playMove(game, { from, to, promotion });
+      if (r) hostCommit(liveRef.current, r);
       return;
     }
     if (mode !== 'play') return;
     if (thinking || game.isGameOver() || viewIndex !== null) return;
-    if (game.turn() !== color) return;
-    const g = new Chess(game.fen());
-    let moved;
-    try {
-      moved = g.move({ from, to, promotion });
-    } catch { return; }
-    g.difficultyLabel = difficultyLabel(difficulty);
-    g.humanColor = color;
-    const lm = { from, to, san: moved.san, color: moved.color, piece: moved.piece };
-    const victim = findVictim(game, from, to);
-    if (victim) setCaptured((c) => ({ ...c, [victim.color]: [...c[victim.color], victim.type] }));
-    playMoveSound({ capture: !!victim });
+    if (game.turn() !== color || manualResult || timeOver) return;
+    const r = playMove(game, { from, to, promotion });
+    if (!r) return;
     clearHint();
-    setGame(g);
-    setLastMove(lm);
-    setHistory((h) => [...(h || [{ fen: game.fen(), lastMove: null }]), { fen: g.fen(), lastMove: lm, victim: victim || null }]);
-    engineReply(g, difficulty);
+    commitMove(game, r);
+    liveRef.current.game = r.game; // engineReply reads the live game after its search
+    engineReply(r.game, difficulty);
   }
 
   const viewing = viewIndex !== null;
@@ -1143,11 +1175,11 @@ export default function Play() {
                 className="toolbar-select"
                 aria-label="Clock"
                 title="Game clock"
-                value={clockMinutes}
-                onChange={(e) => { const m = Number(e.target.value); setClockMinutes(m); resetClocks(m); }}
+                value={clockId}
+                onChange={(e) => { setClockId(e.target.value); resetClocks(e.target.value); }}
               >
-                {CLOCK_OPTIONS.map((m) => (
-                  <option key={m} value={m}>{m === 0 ? 'Clock: off' : `Clock: ${m} min`}</option>
+                {TIME_CONTROLS.map((t) => (
+                  <option key={t.id} value={t.id}>{t.label}</option>
                 ))}
               </select>
             )}
@@ -1294,15 +1326,19 @@ export default function Play() {
           {oppGone && <div className="online-gone">Your opponent disconnected.</div>}
           {pendingOffer && (
             <div className="offer-bar">
-              <span>{pendingOffer.kind === 'draw' ? 'Your opponent offers a draw.' : 'Your opponent requests a takeback.'}</span>
-              <button type="button" className="primary" onClick={pendingOffer.kind === 'draw' ? acceptDraw : acceptTakeback}>Accept</button>
+              <span>{{
+                draw: 'Your opponent offers a draw.',
+                takeback: 'Your opponent requests a takeback.',
+                newgame: 'Your opponent wants to start a new game.',
+              }[pendingOffer.kind]}</span>
+              <button type="button" className="primary" onClick={{ draw: acceptDraw, takeback: acceptTakeback, newgame: acceptNewGame }[pendingOffer.kind]}>Accept</button>
               <button type="button" className="mini" onClick={declineOffer}>Decline</button>
             </div>
           )}
           <div className="captured-inline"><CapturedTray victims={byWhite} advantage={whiteAdv} pieceColor="black" /></div>
-          {mode === 'play' && clockMinutes > 0 && (
-            <div className={`game-clock top${game.turn() !== color && !game.isGameOver() && !manualResult && !timeOver && viewIndex === null ? ' running' : ''}`} aria-live="off">
-              {formatClock(clocksRef.current[color === 'w' ? 'b' : 'w'])}
+          {clocksOn && (
+            <div className={`game-clock top${clocksActive && game.turn() !== color ? ' running' : ''}${clk.clocks[color === 'w' ? 'b' : 'w'] < 20_000 ? ' low' : ''}`} aria-live="off">
+              {formatClock(clk.clocks[color === 'w' ? 'b' : 'w'])}
             </div>
           )}
           <Board
@@ -1327,7 +1363,7 @@ export default function Play() {
           )}
           {mode === 'online' && !onlineOver && (
             <div className="online-actions">
-              <button type="button" className="mini" onClick={requestTakeback} disabled={(history?.length || 1) < 3 || !!pendingOffer}>Takeback</button>
+              <button type="button" className="mini" onClick={requestTakeback} disabled={(history?.length || 1) < 2 || !!pendingOffer}>Takeback</button>
               <button type="button" className="mini" onClick={offerDraw} disabled={!!pendingOffer}>Offer draw</button>
               <button type="button" className="mini resign" onClick={resign}>Resign</button>
             </div>
@@ -1384,9 +1420,9 @@ export default function Play() {
             )}
           </div>
           )}
-          {mode === 'play' && clockMinutes > 0 && (
-            <div className={`game-clock bottom${game.turn() === color && !game.isGameOver() && !manualResult && !timeOver && viewIndex === null ? ' running' : ''}`} aria-live="off">
-              {formatClock(clocksRef.current[color])}
+          {clocksOn && (
+            <div className={`game-clock bottom${clocksActive && game.turn() === color ? ' running' : ''}${clk.clocks[color] < 20_000 ? ' low' : ''}`} aria-live="off">
+              {formatClock(clk.clocks[color])}
             </div>
           )}
           <div className="status-line">
@@ -1403,6 +1439,8 @@ export default function Play() {
               <p className="go-title">
                 {onlineOver === 'win-resign' ? 'You win — your opponent resigned'
                   : onlineOver === 'lose-resign' ? 'You resigned'
+                  : onlineOver === 'win-time' ? 'You win on time'
+                  : onlineOver === 'lose-time' ? 'You lost on time'
                   : onlineOver === 'draw-agreed' ? 'Draw agreed'
                   : manualResult ? manualResult.title
                   : timeOver ? (timeOver === color ? 'Time — you lose' : 'Time — you win')

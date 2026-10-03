@@ -3,10 +3,14 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { Readable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.dirname(__dirname);
 const app = express();
+// behind a reverse proxy set TRUST_PROXY=1 so req.ip (rate limiting) is the client, not the proxy
+if (process.env.TRUST_PROXY) app.set('trust proxy', process.env.TRUST_PROXY === '1' ? 1 : process.env.TRUST_PROXY);
 app.use(express.json({ limit: '256kb' }));
 
 // cross-origin isolation: enables SharedArrayBuffer so the multithreaded
@@ -38,53 +42,48 @@ notation when mentioning moves (e.g. Nf3, exd5). Never dump engine lines unless 
 If the user asks something off-topic, answer briefly and steer back to chess.
 Game context (FEN, recent moves, stage, difficulty) arrives with each message as a JSON block marked GAME-STATE.`;
 
-/* which coach would be used with a given client config (env vars are the fallback) */
-function resolveCoach(cfg = {}) {
-  const key = cfg.apiKey || process.env.COACH_API_KEY;
-  const base = (cfg.baseUrl || process.env.COACH_BASE_URL || 'https://api.moonshot.cn/v1').replace(/\/$/, '');
-  const model = cfg.model || process.env.COACH_MODEL || 'kimi-k3';
-  return { key, base, model };
+const ENV_BASE = (process.env.COACH_BASE_URL || 'https://api.moonshot.cn/v1').replace(/\/$/, '');
+
+/* which coach would be used with a given client config (env vars are the fallback).
+   The server's own key is only ever sent to the server's own base URL — a
+   client-supplied base URL must come with a client-supplied key, otherwise
+   anyone could point the proxy at their host and harvest COACH_API_KEY. */
+export function resolveCoach(cfg = {}) {
+  const clientBase = typeof cfg.baseUrl === 'string' ? cfg.baseUrl.trim().replace(/\/$/, '') : '';
+  const clientKey = typeof cfg.apiKey === 'string' ? cfg.apiKey.trim() : '';
+  const base = clientBase || ENV_BASE;
+  const key = clientKey || (base === ENV_BASE ? process.env.COACH_API_KEY : undefined);
+  const model = (typeof cfg.model === 'string' && cfg.model.trim()) || process.env.COACH_MODEL || 'kimi-k3';
+  return { key, base, model, usingEnvKey: !clientKey && Boolean(key) };
 }
 
-app.get('/api/coach/status', (req, res) => {
-  const { key, base, model } = resolveCoach();
-  res.json({
-    envConfigured: Boolean(process.env.COACH_API_KEY),
-    liveAvailable: Boolean(key),
-    base, model,
-  });
-});
+/* private / loopback / link-local ranges — blocked as upstream targets unless
+   COACH_ALLOW_PRIVATE_HOSTS=1 (e.g. a self-hosted LLM on the LAN) */
+export function isPrivateAddress(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split('.').map(Number);
+    return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31)
+      || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+  }
+  if (net.isIPv6(ip)) {
+    const v = ip.toLowerCase();
+    if (v.startsWith('::ffff:')) return isPrivateAddress(v.slice(7));
+    return v === '::1' || v === '::' || v.startsWith('fc') || v.startsWith('fd') || v.startsWith('fe80');
+  }
+  return true;
+}
 
-/* list models available on the configured endpoint (client config overrides env fallback) */
-app.get('/api/coach/models', async (req, res) => {
-  const { key, base } = resolveCoach({
-    baseUrl: req.query.baseUrl,
-    apiKey: req.query.apiKey,
-  });
-  if (!key) {
-    return res.status(200).json({ ok: false, error: 'no API key configured' });
-  }
-  if (!isValidBaseUrl(base)) {
-    return res.status(200).json({ ok: false, error: 'invalid base URL' });
-  }
+async function isAllowedUpstream(base) {
+  if (!isValidBaseUrl(base)) return false;
+  if (process.env.COACH_ALLOW_PRIVATE_HOSTS === '1') return true;
+  const host = new URL(base).hostname.replace(/^\[|\]$/g, '');
   try {
-    const upstream = await fetch(`${base}/models`, {
-      headers: { Authorization: `Bearer ${key}` },
-    });
-    const text = await upstream.text();
-    if (!upstream.ok) {
-      return res.status(200).json({ ok: false, error: `LLM ${upstream.status}: ${text.slice(0, 300)}` });
-    }
-    const data = JSON.parse(text);
-    const models = (Array.isArray(data.data) ? data.data : [])
-      .map((m) => m?.id)
-      .filter(Boolean)
-      .sort();
-    res.json({ ok: true, models });
-  } catch (err) {
-    res.status(200).json({ ok: false, error: String(err) });
+    const addrs = net.isIP(host) ? [{ address: host }] : await dns.lookup(host, { all: true });
+    return addrs.length > 0 && addrs.every((a) => !isPrivateAddress(a.address));
+  } catch {
+    return false;
   }
-});
+}
 
 /* simple in-memory rate limiter: RATE_LIMIT_MAX requests per RATE_LIMIT_WINDOW ms per ip */
 const rateLimit = new Map();
@@ -108,6 +107,56 @@ function isRateLimited(ip) {
   entry.count += 1;
   return entry.count > RATE_LIMIT_MAX;
 }
+
+/* only user/assistant turns with string content reach the model — clients
+   must not be able to inject their own system prompt */
+export function sanitizeMessages(messages) {
+  if (!Array.isArray(messages)) return [];
+  return messages
+    .filter((m) => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string')
+    .slice(-20)
+    .map((m) => ({ role: m.role, content: m.content.slice(0, 4000) }));
+}
+
+app.get('/api/coach/status', (req, res) => {
+  const { key, base, model } = resolveCoach();
+  res.json({
+    envConfigured: Boolean(process.env.COACH_API_KEY),
+    liveAvailable: Boolean(key),
+    base, model,
+  });
+});
+
+/* list models available on the configured endpoint (client config overrides env fallback) */
+app.post('/api/coach/models', async (req, res) => {
+  if (isRateLimited(req.ip)) {
+    return res.status(429).json({ ok: false, error: 'rate limited' });
+  }
+  const { key, base } = resolveCoach(req.body?.config);
+  if (!key) {
+    return res.status(200).json({ ok: false, error: 'no API key configured' });
+  }
+  if (!(await isAllowedUpstream(base))) {
+    return res.status(200).json({ ok: false, error: 'invalid or disallowed base URL' });
+  }
+  try {
+    const upstream = await fetch(`${base}/models`, {
+      headers: { Authorization: `Bearer ${key}` },
+    });
+    const text = await upstream.text();
+    if (!upstream.ok) {
+      return res.status(200).json({ ok: false, error: `LLM ${upstream.status}: ${text.slice(0, 300)}` });
+    }
+    const data = JSON.parse(text);
+    const models = (Array.isArray(data.data) ? data.data : [])
+      .map((m) => m?.id)
+      .filter(Boolean)
+      .sort();
+    res.json({ ok: true, models });
+  } catch (err) {
+    res.status(200).json({ ok: false, error: String(err) });
+  }
+});
 
 function isValidBaseUrl(base) {
   try {
@@ -164,15 +213,15 @@ app.post('/api/coach', async (req, res) => {
   if (!key) {
     return res.status(200).json({ ok: false, offline: true, reply: null, model: null });
   }
-  if (!isValidBaseUrl(base)) {
-    return res.status(200).json({ ok: false, error: 'invalid base URL' });
+  if (!(await isAllowedUpstream(base))) {
+    return res.status(200).json({ ok: false, error: 'invalid or disallowed base URL' });
   }
   const { messages, game } = req.body || {};
   const effort = ['low', 'high', 'max'].includes(req.body?.config?.effort) ? req.body.config.effort : '';
 
   const convo = [
     { role: 'system', content: SYSTEM_PROMPT },
-    ...(Array.isArray(messages) ? messages.slice(-20) : []),
+    ...sanitizeMessages(messages),
   ];
 
   try {
@@ -218,6 +267,8 @@ app.post('/api/coach', async (req, res) => {
   }
 });
 
+export { app };
+
 /* health check for podman */
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
@@ -230,6 +281,6 @@ if (fs.existsSync(dist)) {
 
 /* dev mode: just run the API, vite handles the frontend */
 const isDev = process.argv.includes('--dev');
-app.listen(PORT, () => {
+if (!process.env.VITEST) app.listen(PORT, () => {
   console.log(`[maestro] ${isDev ? 'API' : 'server'} on http://localhost:${PORT} — coach: ${process.env.COACH_API_KEY ? 'LLM live' : 'offline fallback'}`);
 });

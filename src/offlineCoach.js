@@ -38,14 +38,7 @@ function hangingPieces(fen) {
   return report;
 }
 
-function material(fen) {
-  const g = new Chess(fen);
-  let score = 0;
-  for (const row of g.board()) for (const p of row) if (p) score += (p.color === 'w' ? 1 : -1) * PIECE_VALUES[p.type];
-  return score;
-}
-
-export async function offlineCoachReply({ fen, pgn, message, history, stage }) {
+export async function offlineCoachReply({ fen, pgn, message, stage }) {
   const g = new Chess(fen);
   const side = g.turn();
   const q = (message || '').toLowerCase();

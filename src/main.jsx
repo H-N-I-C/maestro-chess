@@ -14,6 +14,17 @@ createRoot(document.getElementById('root')).render(
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
+    // first visit on a host without COOP/COEP headers (GitHub Pages): once the
+    // worker controls the page it adds them, so reload once to become
+    // cross-origin isolated and unlock the multithreaded engine
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (window.crossOriginIsolated) return;
+      try {
+        if (sessionStorage.getItem('maestro-coi-reload')) return;
+        sessionStorage.setItem('maestro-coi-reload', '1');
+      } catch { return; }
+      window.location.reload();
+    });
     navigator.serviceWorker.register('sw.js').then((reg) => {
       // a new worker already waiting (e.g. after a deploy)? offer the update now
       if (reg.waiting) showUpdateToast(reg.waiting);

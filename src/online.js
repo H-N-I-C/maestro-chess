@@ -8,8 +8,11 @@ const PREFIX = 'maestro-';
 const CODE_CHARS = 'abcdefghjkmnpqrstuvwxyz23456789';
 
 export function makeCode() {
+  // crypto RNG: codes are the only thing standing between a stranger and your game
+  const bytes = new Uint8Array(6);
+  crypto.getRandomValues(bytes);
   let s = '';
-  for (let i = 0; i < 6; i++) s += CODE_CHARS[Math.floor(Math.random() * CODE_CHARS.length)];
+  for (const b of bytes) s += CODE_CHARS[b % CODE_CHARS.length];
   return s;
 }
 

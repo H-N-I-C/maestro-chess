@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import Play from './components/Play.jsx';
 import Lessons from './components/Lessons.jsx';
-import { setSoundMuted, isSoundMuted } from './sound.js';
+import { setSoundMuted } from './sound.js';
 
 const THEMES = [
   { id: 'walnut', label: 'Walnut Study' },

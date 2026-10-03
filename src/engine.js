@@ -137,17 +137,29 @@ function runSearch({ fen, beforeGo, go, timeoutMs }) {
 export async function analyze(fen, { depth = 12, movetime = 400 } = {}) {
   const { bestmove, lines } = await runSearch({
     fen,
+    // bestMove() may have weakened the engine for play; analysis (hints,
+    // coach grading, draw decisions) must always run at full strength
+    beforeGo: () => {
+      send('setoption name UCI_LimitStrength value false');
+      send('setoption name Skill Level value 20');
+    },
     go: `go depth ${depth} movetime ${movetime}`,
     timeoutMs: movetime + 1500,
   });
-  let cp = null, mate = null;
-  for (const l of lines) {
-    const m = l.match(/score cp (-?\d+)/);
-    if (m) cp = parseInt(m[1], 10);
-    const mm = l.match(/score mate (-?\d+)/);
-    if (mm) mate = parseInt(mm[1], 10);
+  return { ...parseScore(lines), bestmove };
+}
+
+/** Score from the last scored info line ({cp, mate}, side-to-move POV). Only
+    one of cp/mate is set — a stale mate from an earlier depth must not linger. */
+export function parseScore(lines) {
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const m = lines[i].match(/score (cp|mate) (-?\d+)/);
+    if (m) {
+      const v = parseInt(m[2], 10);
+      return m[1] === 'cp' ? { cp: v, mate: null } : { cp: null, mate: v };
+    }
   }
-  return { cp, mate, bestmove };
+  return { cp: null, mate: null };
 }
 
 /**

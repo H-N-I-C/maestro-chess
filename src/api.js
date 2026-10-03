@@ -152,8 +152,10 @@ export async function askCoach({ messages, game, stream = false, onToken }) {
 export async function coachStatus() {
   try {
     const res = await fetch('/api/coach/status');
+    if (!res.ok) return { serverless: true };
     return await res.json();
   } catch {
-    return null;
+    // static hosting (e.g. GitHub Pages) has no API — or the response wasn't JSON
+    return { serverless: true };
   }
 }

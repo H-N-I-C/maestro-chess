@@ -43,7 +43,8 @@ function Settings() {
   const effective = {
     base: baseUrl || status?.base || DEFAULT_BASE,
     model: model || status?.model || DEFAULT_MODEL,
-    live: Boolean(apiKey || status?.envConfigured),
+    // the server key is only used with the server's own base URL
+    live: !status?.serverless && Boolean(apiKey || (status?.envConfigured && (!baseUrl || baseUrl.replace(/\/$/, '') === status?.base))),
   };
 
   function save() {
@@ -87,11 +88,12 @@ function Settings() {
     setFetchingModels(true);
     setModels(null);
     try {
-      const params = new URLSearchParams({
-        baseUrl: baseUrl.trim(),
-        apiKey: apiKey.trim(),
+      // POST so the key never lands in a URL (proxy/access logs)
+      const res = await fetch('/api/coach/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ config: { baseUrl: baseUrl.trim(), apiKey: apiKey.trim() } }),
       });
-      const res = await fetch(`/api/coach/models?${params}`);
       const data = await res.json();
       if (data.ok && data.models?.length) {
         setModels(data.models);
@@ -115,9 +117,16 @@ function Settings() {
           ? <>Live AI coach · <strong>{effective.model}</strong></>
           : <>Offline engine coach (Stockfish 16, local)</>}
       </div>
+      {status?.serverless && (
+        <p className="side-note warn">
+          No Maestro server is reachable (this copy is served as static files, e.g. GitHub Pages).
+          The live AI coach needs the self-hosted server — the offline Stockfish coach is active.
+        </p>
+      )}
       <p className="side-note">
         Any OpenAI-compatible API works. Values are stored in this browser only; if left blank,
-        the server's environment variables apply.
+        the server's environment variables apply. The server's own key is only used with the
+        server's own base URL — a custom base URL needs your own key.
       </p>
       <label>
         Base URL
