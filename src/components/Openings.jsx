@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Chess } from 'chess.js';
 import Board from './Board.jsx';
 import { playMoveSound } from '../sound.js';
-import { openingName } from '../openings.js';
+import { localOpeningName } from '../openings.js';
 import {
   replay, lookup, addLine, removeLine, hasLine, emptyRepertoire, mergeRepertoire, STARTERS,
   turnAfter, nextMoves, pickOpponentMove, cardId, review, dueLineCount,
 } from '../openingTrainer.js';
-import { useT, useLang } from '../i18n.js';
+import { useT, useLang, localSan } from '../i18n.js';
 import { localizeOpening } from '../locales/openings.es.js';
 import './openings.css';
 
@@ -51,7 +51,7 @@ function MoveList({ sans, cursor, onJump }) {
             className={`op-ply${i === cursor - 1 ? ' current' : ''}${i >= cursor ? ' ahead' : ''}`}
             aria-current={i === cursor - 1 ? 'step' : undefined}
             onClick={() => onJump(i + 1)}
-          >{s}</button>
+          >{localSan(s)}</button>
         </li>
       ))}
     </ol>
@@ -190,7 +190,7 @@ export default function Openings() {
       playMoveSound({ capture: r.capture });
       const clean = drill.misses === 0;
       if (clean) setSrs((s) => ({ ...s, [id]: review(s[id], true) }));
-      setAnnounce(clean ? t('openings.say.correct') : t('openings.say.correctAfter', { san: r.san }));
+      setAnnounce(clean ? t('openings.say.correct') : t('openings.say.correctAfter', { san: localSan(r.san) }));
       setDrill((d) => ({
         ...d, sans: [...d.sans, r.san], misses: 0, hint: null,
         results: clean ? { ...d.results, ok: d.results.ok + 1 } : d.results,
@@ -204,7 +204,7 @@ export default function Openings() {
     if (misses === 1) setSrs((s) => ({ ...s, [id]: review(s[id], false) }));
     const answer = expected[0];
     const hint = misses >= 2 ? squaresOf(base, answer) : null;
-    setAnnounce(misses >= 2 ? t('openings.say.wrongAnswer', { san: answer }) : t('openings.say.wrongRetry'));
+    setAnnounce(misses >= 2 ? t('openings.say.wrongAnswer', { san: localSan(answer) }) : t('openings.say.wrongRetry'));
     setDrill((d) => ({
       ...d, wrongFen: g.fen(), wrongMove: { from: r.from, to: r.to }, misses, hint,
       results: misses === 1 ? { ...d.results, bad: d.results.bad + 1 } : d.results,
@@ -237,7 +237,7 @@ export default function Openings() {
     }
     : { fen: exploreFen, orientation, onMove: onExploreMove, lastMove, arrows: [] };
 
-  const name = info.opening?.name || openingName(shown);
+  const name = info.opening?.name || localOpeningName(shown, lang);
 
   return (
     <div className="openings">
@@ -287,9 +287,9 @@ export default function Openings() {
                         <button
                           type="button" className="op-cont"
                           onClick={() => playExplore(c.san, squaresOf(exploreFen, c.san).capture)}
-                          aria-label={c.name ? t('openings.playContNamed', { san: c.san, name: c.name }) : t('openings.playCont', { san: c.san })}
+                          aria-label={c.name ? t('openings.playContNamed', { san: localSan(c.san), name: c.name }) : t('openings.playCont', { san: localSan(c.san) })}
                         >
-                          <strong>{c.san}</strong>
+                          <strong>{localSan(c.san)}</strong>
                           {c.name && <span>{c.name}</span>}
                         </button>
                       </li>
@@ -329,7 +329,7 @@ export default function Openings() {
                   {rep[c].length === 0 && <p className="op-muted">{t('openings.noLines')}</p>}
                   <ul>
                     {rep[c].map((l) => {
-                      const nm = lookupL(l).opening?.name || openingName(l) || t('openings.customLine');
+                      const nm = lookupL(l).opening?.name || localOpeningName(l, lang) || t('openings.customLine');
                       return (
                         <li key={l.join(' ')} className="op-rep-line">
                           <div>

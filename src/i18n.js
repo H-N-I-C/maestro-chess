@@ -76,3 +76,15 @@ export function useT() {
 export function useLang() {
   return useSyncExternalStore(subscribe, getLang, getLang);
 }
+
+/* Piece letters per language for DISPLAY only — PGN, the engine and stored
+   moves always use international SAN (K Q R B N). */
+const PIECE_LETTERS = { es: { K: 'R', Q: 'D', R: 'T', B: 'A', N: 'C' } };
+
+/** SAN in the UI language's piece letters, e.g. es: "Nxe5+" → "Cxe5+", "e8=Q" → "e8=D". */
+export function localSan(san, lng = lang) {
+  const map = PIECE_LETTERS[lng];
+  if (!san || !map) return san;
+  // only uppercase piece letters change; castling (O-O) and squares stay
+  return String(san).replace(/[KQRBN]/g, (c) => map[c]);
+}

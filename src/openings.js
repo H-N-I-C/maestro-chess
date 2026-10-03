@@ -2,6 +2,8 @@
    Covers the mainstream openings a learner meets; unknown lines just
    report the family (e.g. "Sicilian Defense"). */
 
+import { LEGACY_NAMES_ES } from './locales/openingNames.es.js';
+
 const BOOK = [
   { p: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4'], n: 'Italian Game' },
   { p: ['e4', 'e5', 'Nf3', 'Nc6', 'Bc4', 'Bc5'], n: 'Italian Game: Giuoco Piano' },
@@ -79,4 +81,10 @@ export function openingName(sans) {
     }
   }
   return best?.n || null;
+}
+
+/** openingName in the UI language (Spanish names where known, else English). */
+export function localOpeningName(sans, lang = 'en') {
+  const n = openingName(sans);
+  return n && lang === 'es' ? LEGACY_NAMES_ES[n] || n : n;
 }

@@ -5,7 +5,7 @@ import { GLYPHS } from '../Board.jsx';
 import { DIFFICULTIES } from '../../engine.js';
 import { suggestedLevel, getRating } from '../../library.js';
 import { drawReason } from '../../gameUtils.js';
-import { useT } from '../../i18n.js';
+import { useT, localSan } from '../../i18n.js';
 
 /** Create/join lobby for online play. */
 export function OnlineLobby({ online, joinCode, setJoinCode, onCreate, onJoin, onCancel }) {
@@ -105,8 +105,8 @@ export function MovesSidePanel({
     rows.push(
       <li key={num}>
         <span className="mv-num">{num}</span>
-        <button type="button" className={`mv${activePly === k ? ' active' : ''}`} onClick={() => jump(k)}>{white?.san}</button>
-        {black && <button type="button" className={`mv${activePly === k + 1 ? ' active' : ''}`} onClick={() => jump(k + 1)}>{black.san}</button>}
+        <button type="button" className={`mv${activePly === k ? ' active' : ''}`} onClick={() => jump(k)}>{localSan(white?.san)}</button>
+        {black && <button type="button" className={`mv${activePly === k + 1 ? ' active' : ''}`} onClick={() => jump(k + 1)}>{localSan(black.san)}</button>}
       </li>
     );
   }
@@ -124,7 +124,7 @@ export function MovesSidePanel({
         <div className="last-move-line">
           <span className={`lm-glyph ${boardLastMove.color === 'w' ? 'white' : 'black'}`}>{GLYPHS[boardLastMove.piece]}</span>
           <span className="lm-text">
-            <strong>{boardLastMove.color === 'w' ? t('common.white') : t('common.black')}</strong> {t('play.played')} <strong>{boardLastMove.san}</strong>
+            <strong>{boardLastMove.color === 'w' ? t('common.white') : t('common.black')}</strong> {t('play.played')} <strong>{localSan(boardLastMove.san)}</strong>
             <span className="lm-sq"> ({boardLastMove.from} → {boardLastMove.to})</span>
           </span>
         </div>

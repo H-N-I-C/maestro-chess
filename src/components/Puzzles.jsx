@@ -7,7 +7,7 @@ import {
   normalizePuzzle, solverColor, uciToMove, moveToUci, updateRating,
   selectPuzzle, scheduleReview, dueReviews, checkMove, humanizeTheme,
 } from '../puzzleEngine.js';
-import { useT, useLang } from '../i18n.js';
+import { useT, useLang, localSan } from '../i18n.js';
 import './puzzles.css';
 
 const STORE_KEY = 'maestro-puzzles';
@@ -199,7 +199,7 @@ export default function Puzzles() {
       const r = record(false);
       setStatus('opponent'); // block input while the move is taken back
       setWrong(to);
-      setAnnounce(t('puzzles.wrongMove', { san: played.move.san }) + (r && r.delta ? ' ' + t('puzzles.ratingChange', { delta: r.delta }) : ''));
+      setAnnounce(t('puzzles.wrongMove', { san: localSan(played.move.san) }) + (r && r.delta ? ' ' + t('puzzles.ratingChange', { delta: r.delta }) : ''));
       const before = fen, prevLast = lastMove;
       later(() => {
         settledRef.current = { fen: before, ply };
@@ -215,7 +215,7 @@ export default function Puzzles() {
     if (verdict === 'mate' || nextPly >= puzzle.moves.length) { finish(true); return; }
     // opponent's scripted reply
     setStatus('opponent');
-    setAnnounce(t('puzzles.correctKeepGoing', { san: played.move.san }));
+    setAnnounce(t('puzzles.correctKeepGoing', { san: localSan(played.move.san) }));
     later(() => {
       const reply = applyUci(played.fen, puzzle.moves[nextPly]);
       playMoveSound({ capture: Boolean(reply.move.captured) });

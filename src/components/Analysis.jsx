@@ -8,7 +8,7 @@ import {
   positionsOf, runReview, winPercent, evalLabel, keyMoments, uciToSan,
   CLASS_KEYS, CLASS_SYMBOLS,
 } from '../review.js';
-import { t as tr, useT, useLang } from '../i18n.js';
+import { t as tr, useT, useLang, localSan } from '../i18n.js';
 import { playMoveSound } from '../sound.js';
 import { loadFen as loadAnyFen, isChess960Pgn, load960Pgn } from '../chess960.js';
 import './analysis.css';
@@ -97,7 +97,7 @@ function localSummary(review, headers) {
     lines.push(tr('analysis.turningPoints'));
     for (const m of km) {
       const num = Math.ceil(m.ply / 2) + (m.color === 'w' ? '.' : '...');
-      lines.push(tr('analysis.turningLine', { num, san: m.san, cls: tr(CLASS_KEYS[m.cls]).toLowerCase(), best: m.bestSan || m.best }));
+      lines.push(tr('analysis.turningLine', { num, san: localSan(m.san), cls: tr(CLASS_KEYS[m.cls]).toLowerCase(), best: localSan(m.bestSan || m.best) }));
     }
   } else {
     lines.push(tr('analysis.cleanGame'));
@@ -315,9 +315,9 @@ export default function Analysis({ gameId, onOpenGame }) {
           type="button"
           className={`am${!variation && ply === i ? ' active' : ''}${m ? ` cls-${m.cls}` : ''}`}
           onClick={() => go(i)}
-          aria-label={`${positions[i].san}${m && m.cls !== 'good' ? `, ${t(CLASS_KEYS[m.cls])}` : ''}`}
+          aria-label={`${localSan(positions[i].san)}${m && m.cls !== 'good' ? `, ${t(CLASS_KEYS[m.cls])}` : ''}`}
         >
-          {positions[i].san}{m && CLASS_SYMBOLS[m.cls] ? <sup>{CLASS_SYMBOLS[m.cls]}</sup> : null}
+          {localSan(positions[i].san)}{m && CLASS_SYMBOLS[m.cls] ? <sup>{CLASS_SYMBOLS[m.cls]}</sup> : null}
         </button>
       );
     };
@@ -357,11 +357,11 @@ export default function Analysis({ gameId, onOpenGame }) {
             ? <>{t('analysis.exploring')} {variation.sans.join(' ')} <button type="button" className="linklike" onClick={() => setVariation(null)}>{t('analysis.backToGame')}</button></>
             : reviewMove
               ? <>
-                  <strong>{Math.ceil(ply / 2)}{reviewMove.color === 'w' ? '.' : '...'} {reviewMove.san}</strong>
+                  <strong>{Math.ceil(ply / 2)}{reviewMove.color === 'w' ? '.' : '...'} {localSan(reviewMove.san)}</strong>
                   {' — '}<span className={`cls-${reviewMove.cls}`}>{t(CLASS_KEYS[reviewMove.cls])}</span>
-                  {reviewMove.cls !== 'best' && reviewMove.best && <> · {t('analysis.bestWas')} <strong>{reviewMove.bestSan || reviewMove.best}</strong></>}
+                  {reviewMove.cls !== 'best' && reviewMove.best && <> · {t('analysis.bestWas')} <strong>{localSan(reviewMove.bestSan) || reviewMove.best}</strong></>}
                 </>
-              : engineOn && live?.best ? <>{t('analysis.engineLabel')} <strong>{uciToSan(shownFen, live.best) || live.best}</strong> ({evalLabel(live)})</> : ' '}
+              : engineOn && live?.best ? <>{t('analysis.engineLabel')} <strong>{localSan(uciToSan(shownFen, live.best)) || live.best}</strong> ({evalLabel(live)})</> : ' '}
         </p>
       </div>
 

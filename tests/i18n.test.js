@@ -50,3 +50,16 @@ describe('i18n', () => {
     expect(spokenSan('e8=Q', 'es')).toBe('peón a e8 corona dama');
   });
 });
+
+import { localSan } from '../src/i18n.js';
+describe('localSan', () => {
+  it('uses Spanish piece letters for display only', () => {
+    expect(localSan('Nxe5+', 'es')).toBe('Cxe5+');
+    expect(localSan('exd8=Q#', 'es')).toBe('exd8=D#');
+    expect(localSan('Kf1', 'es')).toBe('Rf1');
+    expect(localSan('Rad1', 'es')).toBe('Tad1');
+    expect(localSan('O-O-O', 'es')).toBe('O-O-O');
+    expect(localSan('Bb5', 'en')).toBe('Bb5');
+    expect(localSan(null, 'es')).toBe(null);
+  });
+});

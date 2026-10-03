@@ -6,7 +6,7 @@ import { formatClock, timeControl } from '../hooks/useClocks.js';
 import { playMoveSound } from '../sound.js';
 import { EvalBar } from './Analysis.jsx';
 import { analyze } from '../engine.js';
-import { useT } from '../i18n.js';
+import { useT, localSan } from '../i18n.js';
 
 const OVER_TEXT = {
   'win-resign': 'spectate.over.winResign', 'lose-resign': 'spectate.over.loseResign',
@@ -106,7 +106,7 @@ export default function Spectate({ code, onLeave }) {
           </div>
           <ol className="spectate-moves panel" aria-label={t('spectate.moves')}>
             {sans.map((san, i) => (i % 2 === 0 ? (
-              <li key={i}><span className="am-num">{i / 2 + 1}.</span> {san} {sans[i + 1] || ''}</li>
+              <li key={i}><span className="am-num">{i / 2 + 1}.</span> {localSan(san)} {localSan(sans[i + 1]) || ''}</li>
             ) : null))}
           </ol>
         </div>

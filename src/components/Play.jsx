@@ -8,13 +8,13 @@ import { OnlineLobby, GameOverPanel, MovesSidePanel, ShareDialog } from './play/
 import { DIFFICULTIES, bestMove, analyze, customLevel } from '../engine.js';
 import { playMoveSound } from '../sound.js';
 import { hostGame, joinGame, makeCode } from '../online.js';
-import { openingName } from '../openings.js';
+import { localOpeningName } from '../openings.js';
 import { resetCoachChat } from '../coachChat.js';
 import { useClocks, TIME_CONTROLS, migrateTimeControl, formatClock } from '../hooks/useClocks.js';
 import { saveGame, updateRating } from '../library.js';
 import { Chess960Game, randomStartIndex, loadFen as loadAnyFen } from '../chess960.js';
 import { gameFromHistory, playMove, drawReason, capturedFromHistory, isValidHistory, spokenSan } from '../gameUtils.js';
-import { t, useT, useLang } from '../i18n.js';
+import { t, useT, useLang, localSan } from '../i18n.js';
 
 const COACH_OPEN_KEY = 'maestro-coach-open';
 const MOVES_OPEN_KEY = 'maestro-moves-open';
@@ -785,7 +785,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
       try { san = loadAnyFen(game.fen()).move({ from, to, promotion: bestmove[4] }).san; } catch { /* keep empty */ }
       clearHint();
       setHintMove({ from, to });
-      setStatus(t('play.status.hint', { move: san || from + '–' + to }));
+      setStatus(t('play.status.hint', { move: localSan(san) || from + '–' + to }));
       hintTimerRef.current = setTimeout(clearHint, 2500);
     } catch {
       setStatus(t('play.status.hintUnavailable'));
@@ -1225,8 +1225,8 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   const opening = useMemo(() => {
     const h0 = history?.[0];
     if (h0?.variant === 'chess960') return h0.sp != null ? t('play.variant.position', { n: h0.sp }) : t('play.variant.chess960');
-    try { return openingName(game.history()); } catch { return null; }
-  }, [game, history, t]);
+    try { return localOpeningName(game.history(), lang); } catch { return null; }
+  }, [game, history, t, lang]);
   function stepPrev() {
     // no earlier position yet (fresh game): the ← key must not select index -1
     if ((history?.length || 0) < 2) return;
@@ -1597,7 +1597,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
                       className={`mv${active ? ' active' : ''}`}
                       ref={active ? (el) => el?.scrollIntoView({ block: 'nearest', inline: 'nearest' }) : undefined}
                       onClick={() => setViewIndex(k === history.length - 1 ? null : k)}
-                    >{e.lastMove?.san}</button>
+                    >{localSan(e.lastMove?.san)}</button>
                   </li>
                 );
               })}

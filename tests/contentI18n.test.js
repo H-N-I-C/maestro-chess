@@ -119,3 +119,17 @@ describe('coach greeting', () => {
     expect(coachMessageText(messages[0])).toBe(translate('es', 'coach.greeting'));
   });
 });
+
+import { readFileSync } from 'node:fs';
+import { LEGACY_NAMES_ES } from '../src/locales/openingNames.es.js';
+import { localOpeningName } from '../src/openings.js';
+describe('legacy opening names', () => {
+  it('every name in src/openings.js has a Spanish entry', () => {
+    const src = readFileSync(new URL('../src/openings.js', import.meta.url), 'utf8');
+    const names = [...src.matchAll(/n: '((?:[^'\\]|\\.)*)'/g)].map((m) => m[1].replace(/\\'/g, "'"));
+    expect(names.length).toBeGreaterThan(40);
+    for (const n of names) expect(LEGACY_NAMES_ES[n], n).toBeTruthy();
+    expect(localOpeningName(['e4', 'e5', 'Nf3', 'Nc6', 'Bc4'], 'es')).toBe('Partida Italiana');
+    expect(localOpeningName(['e4', 'e5', 'Nf3', 'Nc6', 'Bc4'], 'en')).toBe('Italian Game');
+  });
+});
