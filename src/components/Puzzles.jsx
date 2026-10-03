@@ -28,6 +28,7 @@ function loadStore() {
         seen: Array.isArray(s.seen) ? s.seen.slice(-SEEN_LIMIT) : [],
         theme: THEME_FILTERS.some((f) => f.id === s.theme) ? s.theme : 'all',
         inProgress: typeof s.inProgress === 'string' ? s.inProgress : null,
+        inProgressReview: s.inProgressReview === true,
       };
     }
   } catch { /* ignore */ }
@@ -52,6 +53,8 @@ export default function Puzzles() {
   const [loadError, setLoadError] = useState(false);
   const [store, setStore] = useState(loadStore);
   const [mode, setMode] = useState('rated'); // 'rated' | 'review'
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
   const [puzzle, setPuzzle] = useState(null);
   const [fen, setFen] = useState(null);
   const [ply, setPly] = useState(0); // index into puzzle.moves of the next move to play
@@ -114,7 +117,7 @@ export default function Puzzles() {
       setPly(1);
       settledRef.current = { fen: f, ply: 1 };
       // remembered so leaving mid-puzzle (tab switch, reload) still costs rating
-      update({ inProgress: p.id });
+      update((s) => ({ inProgress: p.id, inProgressReview: modeRef.current === 'review' && Boolean(s.srs[p.id]) }));
       setStatus('play');
       setAnnounce(t(solverColor(p) === 'w' ? 'puzzles.yourTurnWhite' : 'puzzles.yourTurnBlack'));
     }, 600);
@@ -141,10 +144,10 @@ export default function Puzzles() {
     if (left) {
       update((s) => {
         // a review puzzle only reschedules; a new rated one also costs rating
-        const reviewing = Boolean(s.srs[left.id]);
+        const reviewing = Boolean(s.inProgressReview); // the same rule record() applies
         const r = reviewing ? { rating: s.rating } : updateRating(s.rating, left.rating, false, s.games);
         return {
-          rating: r.rating, games: reviewing ? s.games : s.games + 1, streak: 0, inProgress: null,
+          rating: r.rating, games: reviewing ? s.games : s.games + 1, streak: 0, inProgress: null, inProgressReview: false,
           history: [...s.history, { id: left.id, won: false }].slice(-10),
           srs: { ...s.srs, [left.id]: scheduleReview(s.srs[left.id], false) },
         };
@@ -166,6 +169,7 @@ export default function Puzzles() {
       if (!won || srs[p.id]) srs[p.id] = scheduleReview(srs[p.id], won);
       return {
         inProgress: null,
+        inProgressReview: false,
         rating: r.rating,
         games: reviewing ? s.games : s.games + 1,
         streak: won ? s.streak + 1 : 0,

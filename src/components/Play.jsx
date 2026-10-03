@@ -104,6 +104,7 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   const t = useT();
   const lang = useLang();
   const saved = useMemo(loadSavedGame, []);
+  const resumable = Boolean(saved) && !saved.online; // an engine game we can resume as-is
   const savedOnline = useMemo(loadSavedOnline, []);
   const [customElo, setCustomElo] = useState(() => {
     const v = Number(localStorage.getItem(CUSTOM_ELO_KEY));
@@ -167,9 +168,9 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   const [rejoin, setRejoin] = useState(savedOnline?.code ? savedOnline : null); // restorable online game
   const [results, setResults] = useState(loadResults);
   // saves from before this flag existed: a finished position was already counted
-  const resultRecorded = useRef(Boolean(saved?.recorded) || (() => {
+  const resultRecorded = useRef(Boolean(resumable) && (Boolean(saved.recorded) || (() => {
     try { return Boolean(saved?.fen) && loadAnyFen(saved.fen).isGameOver(); } catch { return false; }
-  })());
+  })()));
   const [savedGameId, setSavedGameId] = useState(() => (saved?.recorded && saved.savedGameId) || null); // library id of the last finished game
   const [ratingChange, setRatingChange] = useState(null); // {rating, delta} after a rated game
   const onlineRef = useRef(null); // { peer, conn, role, prevColor }
@@ -178,7 +179,6 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
   const myOfferRef = useRef(null); // 'draw'|'takeback'|'newgame' we sent and await an answer to
 
   // finished-game state is saved too, so a reload neither revives nor re-records a game
-  const resumable = saved && !saved.online;
   const [timeOver, setTimeOver] = useState(() => (resumable && (saved.timeOver === 'w' || saved.timeOver === 'b') ? saved.timeOver : null)); // flagged side (vs engine)
   const [manualResult, setManualResult] = useState(() => (resumable && saved.manualResult?.outcome ? saved.manualResult : null)); // {outcome, title, detail}
 
@@ -314,9 +314,10 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
       localStorage.setItem(ONLINE_SAVE_KEY, JSON.stringify({
         code: online.code, role: online.role || onlineRef.current?.role,
         fen: game.fen(), history, captured, lastMove,
+        over: onlineOver, recorded: resultRecorded.current,
       }));
     }
-  }, [game, lastMove, color, difficulty, history, captured, mode, online, clockId, manualResult, timeOver, savedGameId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [game, lastMove, color, difficulty, history, captured, mode, online, clockId, manualResult, timeOver, savedGameId, onlineOver]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     try { localStorage.setItem(PIECE_SET_KEY, pieceSet); } catch { /* ignore */ }
@@ -620,6 +621,8 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     setOppGone(false);
     // a rejoining guest keeps its board until the host's sync arrives
     if (liveRef.current.mode !== 'online') beginOnlineGame('guest');
+    // a rejoin must not count an already-recorded result again
+    if (onlineRef.current.rejoinRecorded) { resultRecorded.current = true; onlineRef.current.rejoinRecorded = false; }
     conn.send({ t: 'sync' });
   }
 
@@ -1002,8 +1005,11 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
       setOnline({ status: 'playing', code: r.code, role: 'host', error: '' });
       setColor('w');
       rebuildFromHistory(hist);
+      resultRecorded.current = Boolean(r.recorded);
+      if (r.over) setOnlineOver(r.over);
       setChatLog((c) => [...c, { who: 'sys', text: t('play.chat.restored') }]);
     } else {
+      onlineRef.current.rejoinRecorded = Boolean(r.recorded);
       onlineJoin(r.code); // guest path re-syncs from the host
     }
   }
@@ -1140,6 +1146,8 @@ export default function Play({ active = true, onAnalyze = () => {} }) {
     try {
       const cur = JSON.parse(localStorage.getItem(GAME_SAVE_KEY));
       if (cur) localStorage.setItem(GAME_SAVE_KEY, JSON.stringify({ ...cur, recorded: true }));
+      const on = mode === 'online' && JSON.parse(localStorage.getItem(ONLINE_SAVE_KEY));
+      if (on) localStorage.setItem(ONLINE_SAVE_KEY, JSON.stringify({ ...on, recorded: true }));
     } catch { /* ignore */ }
     const online_ = mode === 'online';
     const next = JSON.parse(JSON.stringify(results));

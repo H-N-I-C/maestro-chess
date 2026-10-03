@@ -532,4 +532,7 @@ export default {
   'offlineCoach.tip': 'Consejo: soy el entrenador sin conexión (no hay clave de IA configurada en el servidor). Añade COACH_API_KEY al contenedor para conversar con normalidad.',
   'offlineCoach.cantDiscuss': '(Entrenador sin conexión: no puedo hablar libremente de «{message}»; mis respuestas son análisis de la posición. Añade una clave de API para el entrenador de IA completo.)',
   /* ---- end content i18n ---- */
+  // update toast
+  'app.update.ready': 'Hay una nueva versión de Maestro.',
+  'app.update.refresh': 'Actualizar',
 };

@@ -262,18 +262,16 @@ app.post('/api/coach', async (req, res) => {
   try {
     const anthropic = isAnthropicStyle(base);
     const controller = new AbortController();
-    const upstreamTimeout = setTimeout(() => controller.abort(), 60_000);
-    let upstream;
-    try {
-      upstream = await upstreamFetch(anthropic ? `${base}/messages` : `${base}/chat/completions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-        body: anthropic ? buildAnthropicBody(model, convo, game, effort) : buildOpenaiBody(model, convo, game, effort),
-        signal: controller.signal,
-      });
-    } finally {
-      clearTimeout(upstreamTimeout);
-    }
+    // one deadline for headers AND body (a host that stalls mid-body must not hang us);
+    // a stream gets the same budget overall
+    const upstreamTimeout = setTimeout(() => controller.abort(), 120_000);
+    res.on('close', () => clearTimeout(upstreamTimeout));
+    const upstream = await upstreamFetch(anthropic ? `${base}/messages` : `${base}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: anthropic ? buildAnthropicBody(model, convo, game, effort) : buildOpenaiBody(model, convo, game, effort),
+      signal: controller.signal,
+    });
     if (!upstream.ok) {
       const text = await upstream.text();
       return res.status(200).json({ ok: false, error: `LLM ${upstream.status}: ${text.slice(0, 300)}` });

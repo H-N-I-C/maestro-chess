@@ -2,6 +2,7 @@ import './storageGuard.js'; // must stay first: later modules read localStorage 
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App.jsx';
+import { t } from './i18n.js';
 import ErrorBoundary from './components/ErrorBoundary.jsx';
 import './styles.css';
 
@@ -52,10 +53,10 @@ function showUpdateToast(worker) {
   const toast = document.createElement('div');
   toast.className = 'update-toast';
   const msg = document.createElement('span');
-  msg.textContent = 'A new version of Maestro is ready.';
+  msg.textContent = t('app.update.ready');
   const btn = document.createElement('button');
   btn.type = 'button';
-  btn.textContent = 'Refresh';
+  btn.textContent = t('app.update.refresh');
   btn.addEventListener('click', () => {
     // reload happens on 'controllerchange', once the new worker has taken over
     updateAccepted = true;

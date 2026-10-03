@@ -532,4 +532,7 @@ export default {
   'offlineCoach.tip': "Tip: I'm the offline coach (no AI key configured on the server). Add COACH_API_KEY to the container for full conversation.",
   'offlineCoach.cantDiscuss': "(Offline coach: I can't discuss \"{message}\" freely — my replies are position analysis. Add an API key for the full AI coach.)",
   /* ---- end content i18n ---- */
+  // update toast
+  'app.update.ready': 'A new version of Maestro is ready.',
+  'app.update.refresh': 'Refresh',
 };
