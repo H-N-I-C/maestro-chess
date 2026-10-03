@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Chess } from 'chess.js';
 import Board from './Board.jsx';
 import CoachPanel from './CoachPanel.jsx';
-import { STAGES, LESSONS, lessonsForStage } from '../lessons.js';
-import { useT } from '../i18n.js';
+import { STAGES, LESSONS, lessonsForStage, localizeLesson, localizeStage } from '../lessons.js';
+import { useT, useLang } from '../i18n.js';
 
 const START_FEN = 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
 const PROGRESS_KEY = 'maestro-lesson-progress';
@@ -113,8 +113,10 @@ function TryBoard({ fen }) {
   );
 }
 
-function LessonView({ lesson, onBack }) {
+function LessonView({ lesson: baseLesson, onBack }) {
   const t = useT();
+  const lang = useLang();
+  const lesson = useMemo(() => localizeLesson(baseLesson, lang), [baseLesson, lang]);
   const [solvedIds, setSolvedIds] = useState(() => loadProgress().solved);
   const coachGame = useMemo(() => {
     const g = new Chess(lesson.demoFen || lesson.puzzles[0]?.fen || START_FEN);
@@ -167,6 +169,7 @@ function LessonView({ lesson, onBack }) {
 
 export default function Lessons() {
   const t = useT();
+  const lang = useLang();
   const initial = useMemo(loadProgress, []);
   const [stage, setStage] = useState(() => (STAGES.some((s) => s.id === initial.stage) ? initial.stage : STAGES[0].id));
   const [lesson, setLesson] = useState(() => LESSONS.find((l) => l.id === initial.lesson) || null);
@@ -187,21 +190,21 @@ export default function Lessons() {
   return (
     <div className="lessons">
       <div className="stage-tabs">
-        {STAGES.map((s) => (
+        {STAGES.map((st) => localizeStage(st, lang)).map((s) => (
           <button key={s.id} className={s.id === stage ? 'active' : ''} onClick={() => setStage(s.id)}>
             <span className="stage-num">{s.num}</span>
             <span>{s.title.split('—')[1]?.trim() || s.title}</span>
           </button>
         ))}
       </div>
-      <p className="stage-blurb">{STAGES.find((s) => s.id === stage).blurb}</p>
+      <p className="stage-blurb">{localizeStage(STAGES.find((s) => s.id === stage), lang).blurb}</p>
       <div className="lesson-list">
         {lessons.map((l, i) => {
           const solvedCount = l.puzzles.filter((_, pi) => solvedAll.includes(`${l.id}:${pi}`)).length;
           return (
             <button key={l.id} className="lesson-card panel" onClick={() => setLesson(l)}>
               <span className="lesson-idx">{String(i + 1).padStart(2, '0')}</span>
-              <span className="lesson-title">{l.title}</span>
+              <span className="lesson-title">{localizeLesson(l, lang).title}</span>
               <span className="lesson-meta">
                 {t('lessons.puzzleCount', { count: l.puzzles.length })}
                 {solvedCount > 0 && l.puzzles.length > 0 && ` · ${t('lessons.solvedCount', { count: solvedCount })}`}

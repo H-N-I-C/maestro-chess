@@ -2,6 +2,7 @@
    Puzzles follow the Lichess convention: `fen` is the position BEFORE the opponent's move,
    moves[0] is that opponent move, then the solver plays moves[1], moves[3], … */
 import { Chess } from 'chess.js';
+import { THEME_NAMES_ES } from './locales/themes.es.js';
 
 export const START_RATING = 1200;
 export const PROVISIONAL_GAMES = 20;
@@ -140,6 +141,11 @@ const THEME_NAMES = {
   enPassant: 'en passant', underPromotion: 'underpromotion',
 };
 
-export function humanizeTheme(t) {
+const THEME_NAMES_BY_LANG = { es: THEME_NAMES_ES };
+
+/** Readable theme name in `lang` (Spanish when available), falling back to English. */
+export function humanizeTheme(t, lang = 'en') {
+  const local = THEME_NAMES_BY_LANG[lang]?.[t];
+  if (local) return local;
   return THEME_NAMES[t] || t.replace(/([A-Z])/g, ' $1').toLowerCase().trim();
 }

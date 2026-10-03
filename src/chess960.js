@@ -132,6 +132,7 @@ export class Chess960Game {
   get(sq) { return this._cj.get(sq); }
   board() { return this._cj.board(); }
   isAttacked(sq, color) { return this._cj.isAttacked(sq, color); }
+  attackers(sq, color) { return this._cj.attackers(sq, color); }
   inCheck() { return this._cj.inCheck(); }
   isCheck() { return this._cj.inCheck(); }
 
